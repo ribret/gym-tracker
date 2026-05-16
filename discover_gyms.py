@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-Discover John Reed Berlin gym IDs — v6.
-Strategy: Query WPGraphQL API (johnreed.fitness/graphql) for all studio custom fields.
-The Firebase ID must be stored as a WP custom field (server-side mapping: mlStudioID → Firebase ID).
-Also: Women's Club slug discovery via GraphQL studio list.
+Discover John Reed Berlin gym IDs — v7.
+GraphQL via GET (POST war geblockt), WordPress REST API, wp-json ACF-Felder.
 """
 
 import os, json, re, requests
+from urllib.parse import urlencode, quote
 
 FIREBASE_API_KEY       = os.environ["FIREBASE_API_KEY"]
 FIREBASE_REFRESH_TOKEN = os.environ["FIREBASE_REFRESH_TOKEN"]
 
 BRAND_ID  = "johnreed"
 BASE      = "https://app-api.rsg.mamba-app.one-member.com"
-GQL_URL   = "https://johnreed.fitness/graphql"
 KNOWN_FIREBASE_ID = "mL6O8ISwlk5tQt7mnwjo"
 
 KNOWN_ML_IDS = {
@@ -26,9 +24,8 @@ KNOWN_ML_IDS = {
 }
 
 BROWSER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
     "Accept": "application/json",
-    "Content-Type": "application/json",
 }
 
 def get_id_token():
@@ -40,176 +37,127 @@ def get_id_token():
     resp.raise_for_status()
     return resp.json()["id_token"]
 
-def gql(query, variables=None):
-    payload = {"query": query}
-    if variables:
-        payload["variables"] = variables
+def get(url, **kwargs):
     try:
-        r = requests.post(GQL_URL, json=payload, headers=BROWSER_HEADERS, timeout=15)
-        print(f"  GQL {r.status_code}")
+        r = requests.get(url, headers=BROWSER_HEADERS, timeout=15, **kwargs)
+        print(f"  {r.status_code}  {url[:100]}")
         return r
     except Exception as e:
-        print(f"  GQL ERR: {e}")
+        print(f"  ERR  {url[:80]}: {e}")
         return None
 
-def try_api(token, path):
-    url = BASE + path
-    try:
-        r = requests.get(url, headers={
-            "Authorization": f"Bearer {token}",
-            "X-HERO-APP-PLATFORM": "iPhone",
-            "X-HERO-BRAND-ID": BRAND_ID,
-            "X-HERO-APP-IDENTIFIER": "com.heroworkout.mamba.johnreed",
-            "X-HERO-APP-VERSION": "1.20.0",
-            "X-HERO-API-VERSION": "v1",
-            "Accept": "application/json",
-            "User-Agent": "ktor-client",
-        }, timeout=8)
-        if r.status_code == 200:
-            data = r.json().get("data", {})
-            name = data.get("name", data.get("id", "?"))
-            print(f"  ✓ 200  {url}  → {name}")
-        else:
-            print(f"  {r.status_code}  {url}")
-        return r
-    except Exception as e:
-        print(f"  ERR  {url}: {e}")
-        return None
+def gql_get(query):
+    """GraphQL via GET request."""
+    url = "https://johnreed.fitness/graphql?" + urlencode({"query": query})
+    return get(url)
 
 def main():
     print("=== Firebase Token ===")
     token = get_id_token()
     print("OK\n")
 
-    # ── 1. GraphQL Schema-Introspection: was gibt es für Studio-Typen? ──────
-    print("=== GQL: Schema-Introspection (Studio-Typ) ===")
-    r = gql("""
-    {
-      __schema {
-        types {
-          name
-          kind
-          fields {
-            name
-          }
-        }
-      }
-    }
-    """)
+    # ── 1. GraphQL via GET ────────────────────────────────────────────────────
+    print("=== WPGraphQL via GET ===")
+    r = gql_get("{ __typename }")
     if r and r.status_code == 200:
-        try:
-            types = r.json()["data"]["__schema"]["types"]
-            # Suche nach Studio-relevanten Typen
-            for t in types:
-                name = t.get("name", "")
-                if any(kw in name.lower() for kw in ["studio", "gym", "club", "rsg", "magicline", "capacity", "utiliz"]):
-                    fields = [f["name"] for f in (t.get("fields") or [])]
-                    print(f"  Typ: {name} → Felder: {fields[:15]}")
-        except Exception as e:
-            print(f"  Parse-Fehler: {e}")
-            print(r.text[:500])
-    print()
+        print(f"  GraphQL antwortet: {r.text[:200]}")
 
-    # ── 2. GraphQL: Alle Studios mit Custom-Fields abrufen ──────────────────
-    print("=== GQL: Studios mit allen Custom-Fields ===")
-    studio_queries = [
-        # Variante 1: "studios" collection
-        """{ studios(first: 50) { nodes { id slug title
-          customStudioSettings { mlStudioID rsgGymId firebaseGymId gymId studioId externalId }
-        } } }""",
-        # Variante 2: "studio" singular with allStudios
-        """{ allStudios: studios(first: 50) { nodes { id slug
-          studioFields { mlStudioID rsgId firebaseId gymId }
-        } } }""",
-        # Variante 3: Nur slug + studioId
-        """{ studios(first: 50) { nodes { slug studioId mlStudioID } } }""",
-        # Variante 4: pageProps-Style
-        """{ studios(first: 50, where: {language: DE}) { nodes {
-          id slug title
-          translation(language: DE) {
+        # Alle Studio-Slugs + Custom Fields
+        r2 = gql_get("""
+        { studios(first:100) { nodes {
+            slug title
             customStudioSettings { mlStudioID }
-          }
-        } } }""",
-    ]
-    for i, q in enumerate(studio_queries, 1):
-        print(f"\n  Variante {i}:")
-        r = gql(q)
-        if r and r.status_code == 200:
-            data = r.json()
-            if "errors" not in data or not data.get("errors"):
-                print(f"  Erfolg! Antwort: {json.dumps(data)[:2000]}")
-                break
-            else:
-                err = data["errors"][0].get("message", "?")
-                print(f"  GraphQL-Fehler: {err}")
-        print()
-
-    # ── 3. GraphQL: Studio by slug, alle Felder ─────────────────────────────
-    print("\n=== GQL: Studio by Slug (Charlottenburg als Kontrolle) ===")
-    for slug_field in ["uri", "slug", "id"]:
-        r = gql(f"""
-        {{
-          studio({slug_field}: "berlin-charlottenburg") {{
-            id slug title
-            customStudioSettings {{
-              mlStudioID
-            }}
-          }}
-        }}
+        } } }
         """)
-        if r and r.status_code == 200:
-            data = r.json()
-            if "errors" not in data:
-                print(f"  {slug_field}: {json.dumps(data)[:500]}")
-                break
-            else:
-                print(f"  {slug_field}: {data['errors'][0].get('message', '?')}")
+        if r2 and r2.status_code == 200:
+            data = r2.json()
+            print(json.dumps(data)[:3000])
+
+        # Introspection: Welche Felder hat customStudioSettings?
+        r3 = gql_get("""
+        { __type(name:"CustomStudioSettings") { fields { name type { name } } } }
+        """)
+        if r3 and r3.status_code == 200:
+            print(f"  CustomStudioSettings-Felder: {r3.text[:1000]}")
+    else:
+        print("  GraphQL GET auch nicht verfügbar")
     print()
 
-    # ── 4. Magicline API direkt ──────────────────────────────────────────────
-    print("=== Magicline API: mlStudioID → Daten ===")
-    ml_endpoints = [
-        "https://app.magicline.com/api/v1/studio/3818598990",
-        "https://api.magicline.com/v1/studios/3818598990",
-        "https://rsg.magicline.com/api/studio/3818598990",
-    ]
-    for url in ml_endpoints:
-        try:
-            r = requests.get(url, timeout=8,
-                headers={"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-            print(f"  {r.status_code}  {url}")
-            if r.status_code == 200:
-                print(f"  → {r.text[:300]}")
-        except Exception as e:
-            print(f"  ERR  {url}: {e}")
-    print()
+    # ── 2. WordPress REST API ─────────────────────────────────────────────────
+    print("=== WordPress REST API ===")
+    wp_base = "https://johnreed.fitness/wp-json"
 
-    # ── 5. Women's Club: GraphQL Studio-Liste nach Women-Studios ─────────────
-    print("=== GQL: Alle Studios inkl. Women's Club ===")
-    r = gql("""
-    { studios(first: 100) { nodes { id slug title } } }
-    """)
+    # Discovery: welche Post-Types gibt es?
+    r = get(f"{wp_base}/wp/v2/")
     if r and r.status_code == 200:
         data = r.json()
-        if "data" in data and data["data"].get("studios"):
-            nodes = data["data"]["studios"]["nodes"]
-            berlin = [n for n in nodes if "berlin" in n.get("slug", "").lower()
-                      or "berlin" in n.get("title", "").lower()]
-            print(f"  Berliner Studios ({len(berlin)}):")
-            for n in berlin:
-                print(f"    {n.get('slug', '?')}  →  {n.get('title', '?')}")
-        else:
-            print(f"  {json.dumps(data)[:300]}")
+        print(f"  WP REST API verfügbar: {list(data.keys())[:10]}")
+
+    # Custom Post Types suchen
+    r = get(f"{wp_base}/")
+    if r and r.status_code == 200:
+        data = r.json()
+        namespaces = data.get("namespaces", [])
+        routes = list(data.get("routes", {}).keys())
+        studio_routes = [rt for rt in routes if "studio" in rt.lower() or "gym" in rt.lower()]
+        print(f"  Namespaces: {namespaces}")
+        print(f"  Studio-Routes: {studio_routes}")
+
+    # Studios als Custom Post Type
+    for cpt in ["studios", "studio", "gyms", "gym", "clubs", "club", "locations"]:
+        r = get(f"{wp_base}/wp/v2/{cpt}?per_page=50")
+        if r and r.status_code == 200:
+            data = r.json()
+            print(f"  ✓ {cpt}: {len(data)} Einträge")
+            for item in data[:3]:
+                print(f"    id={item.get('id')} slug={item.get('slug')} "
+                      f"acf={item.get('acf', {})}")
+            if len(data) > 3:
+                print(f"    ... und {len(data)-3} weitere")
     print()
 
-    # ── 6. Zusammenfassung ───────────────────────────────────────────────────
-    print("=== STAND ===")
-    print(f"{'Studio':<35} {'mlStudioID':<15} {'Firebase-ID'}")
-    print("-" * 75)
+    # ── 3. ACF REST API ───────────────────────────────────────────────────────
+    print("=== ACF REST Fields ===")
+    # Hole bekannte wpPageIds aus __NEXT_DATA__ und schau ACF-Felder an
+    known_page_ids = {
+        "berlin-charlottenburg": 6209,
+        "berlin-prenzlauer-berg": 5466,
+        "berlin-friedrichshain": 12879,
+        "berlin-kreuzberg": 6208,
+        "berlin-gesundbrunnen": 6204,
+    }
+    for slug, page_id in known_page_ids.items():
+        for ep in [f"wp/v2/studios/{page_id}", f"wp/v2/pages/{page_id}", f"acf/v3/studios/{page_id}"]:
+            r = get(f"{wp_base}/{ep}")
+            if r and r.status_code == 200:
+                data = r.json()
+                acf = data.get("acf", {})
+                meta = data.get("meta", {})
+                print(f"  [{slug}] via {ep}: acf={acf}, meta={list(meta.keys())[:5]}")
+                if acf:
+                    print(f"    ALLE ACF: {json.dumps(acf)[:500]}")
+                break
+    print()
+
+    # ── 4. Suche nach Firebase-ID-Muster in WordPress REST Posts ─────────────
+    print("=== WordPress Studio Posts: Firebase-ID in Meta suchen ===")
+    r = get(f"{wp_base}/wp/v2/studios?per_page=100&_fields=id,slug,acf,meta,customStudioSettings")
+    if r and r.status_code == 200:
+        for item in r.json():
+            text = json.dumps(item)
+            firebase_ids = re.findall(r'[A-Za-z0-9]{20}', text)
+            real_ids = [x for x in firebase_ids if re.search(r'\d', x) and not x.startswith('R0lG')]
+            if real_ids:
+                print(f"  {item.get('slug')}: mögliche IDs: {real_ids}")
+    print()
+
+    # ── 5. Zusammenfassung ────────────────────────────────────────────────────
+    print("=== AKTUELLER STAND ===")
     for slug, ml_id in KNOWN_ML_IDS.items():
         fb = KNOWN_FIREBASE_ID if slug == "berlin-charlottenburg" else "❓"
-        print(f"  {slug:<35} {ml_id:<15} {fb}")
-    print(f"  {'berlin-womens-prenzlauer-berg':<35} {'❓':<15} ❓")
+        print(f"  {slug:<38} ml={ml_id}  firebase={fb}")
+    print(f"  {'berlin-womens-prenzlauer-berg':<38} ml=❓        firebase=❓")
+    print("\nFazit: Proxyman bleibt die einzige sichere Methode für Firebase-IDs.")
 
 if __name__ == "__main__":
     main()
