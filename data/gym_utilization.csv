@@ -1,5 +1,6 @@
-Datum;Uhrzeit;Wochentag;Stunde;Auslastung_%
-2026-05-16;10:25;Saturday;10;40
-2026-05-16;12:38;Saturday;12;57
-2026-05-16;12:57;Saturday;12;54
-2026-05-16;12:58;Saturday;12;54
+Datum;Uhrzeit;Wochentag;Stunde;Tagesphase;Auslastung_%;Temperatur_C;Niederschlag_mm;Wettercode;Bewoelkung_%;Wind_kmh;Ist_Wochenende;Ist_Feiertag_BE;Ist_Schulferien_BE
+2026-05-16;10:25;Samstag;10;Morgen;40;;;;;;1;0;0
+2026-05-16;12:38;Samstag;12;Mittag;57;;;;;;1;0;0
+2026-05-16;12:57;Samstag;12;Mittag;54;;;;;;1;0;0
+2026-05-16;12:58;Samstag;12;Mittag;54;;;;;;1;0;0
+2026-05-16;13:01;Samstag;13;Mittag;54;13.9;0.0;3;100;13.6;1;0;0
