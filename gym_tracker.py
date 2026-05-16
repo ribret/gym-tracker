@@ -24,6 +24,7 @@ GYM_LAT = 52.52   # Berlin Mitte — einheitlich für alle 7 Studios
 GYM_LON = 13.40
 
 DATA_DIR = Path(__file__).parent / "data"
+CSV_FILE = DATA_DIR / "gym_utilization.csv"
 
 GYMS = {
     "charlottenburg": {
@@ -57,6 +58,7 @@ GYMS = {
 }
 
 COLUMNS = [
+    "Studio",
     "Datum", "Uhrzeit", "Wochentag", "Stunde", "Tagesphase",
     "Auslastung_%",
     "Temperatur_C", "Niederschlag_mm", "Wettercode", "Bewoelkung_%", "Wind_kmh",
@@ -77,9 +79,6 @@ def tagesphase(hour: int) -> str:
     if 12 <= hour <= 16: return "Mittag"
     if 17 <= hour <= 22: return "Abend"
     return "Nacht"
-
-def csv_path(key: str) -> Path:
-    return DATA_DIR / f"{key}.csv"
 
 # ── Firebase: frischen ID-Token holen ───────────────────────────────────────
 
@@ -180,45 +179,34 @@ def fetch_school_holidays(year: int) -> list:
 def is_school_holiday(d, periods) -> bool:
     return any(start <= d <= end for start, end in periods)
 
-# ── Migration: gym_utilization.csv → charlottenburg.csv (einmalig) ───────────
+# ── CSV-Migration ─────────────────────────────────────────────────────────────
 
-def migrate_old_filename():
-    old = DATA_DIR / "gym_utilization.csv"
-    new = csv_path("charlottenburg")
-    if old.exists() and not new.exists():
-        old.rename(new)
-        print("Migriert: gym_utilization.csv → charlottenburg.csv")
-
-# ── Migration: altes Schema (5 Spalten) → neues Schema (14 Spalten) ──────────
-
-def migrate_schema_if_needed(key: str):
-    path = csv_path(key)
-    if not path.exists():
+def migrate_csv_if_needed():
+    if not CSV_FILE.exists():
         return
-    with open(path, "r", encoding="utf-8") as f:
+    with open(CSV_FILE, "r", encoding="utf-8") as f:
         first_line = f.readline().strip()
     header = first_line.split(";")
     if header == COLUMNS:
         return
 
-    if header[:5] != ["Datum", "Uhrzeit", "Wochentag", "Stunde", "Auslastung_%"]:
-        return  # unbekanntes Format, nicht anfassen
-
-    with open(path, "r", encoding="utf-8") as f:
+    with open(CSV_FILE, "r", encoding="utf-8") as f:
         rows = list(csv.reader(f, delimiter=";"))
 
-    years = set()
-    for row in rows[1:]:
-        try: years.add(int(row[0][:4]))
-        except: pass
-    holidays_by_year = {y: fetch_holidays(y) for y in years}
-    ferien_by_year   = {y: fetch_school_holidays(y) for y in years}
-
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f, delimiter=";")
-        w.writerow(COLUMNS)
+    if header[:5] == ["Datum", "Uhrzeit", "Wochentag", "Stunde", "Auslastung_%"] and len(header) == 5:
+        # Altes 5-Spalten-Schema → 15 Spalten + Studio-Spalte
+        years = set()
         for row in rows[1:]:
-            d_str, t, wt, hour_str, util = row
+            try: years.add(int(row[0][:4]))
+            except: pass
+        holidays_by_year = {y: fetch_holidays(y) for y in years}
+        ferien_by_year   = {y: fetch_school_holidays(y) for y in years}
+
+        new_rows = []
+        for row in rows[1:]:
+            if len(row) < 5:
+                continue
+            d_str, t, wt, hour_str, util = row[:5]
             wt_de = WOCHENTAGE_EN_TO_DE.get(wt, wt)
             try:
                 d = datetime.strptime(d_str, "%Y-%m-%d").date()
@@ -229,51 +217,64 @@ def migrate_schema_if_needed(key: str):
                 is_sf = int(is_school_holiday(d, ferien_by_year.get(d.year, [])))
             except Exception:
                 phase, is_we, is_ft, is_sf = "", "", "", ""
-            w.writerow([
+            new_rows.append([
+                "charlottenburg",
                 d_str, t, wt_de, hour_str, phase, util,
                 "", "", "", "", "",  # historisches Wetter nicht rekonstruierbar
                 is_we, is_ft, is_sf,
             ])
-    print(f"Schema migriert: {path.name}")
+
+        with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f, delimiter=";")
+            w.writerow(COLUMNS)
+            w.writerows(new_rows)
+        print("CSV migriert: 5-Spalten-Schema → 15 Spalten (Studio=charlottenburg)")
+
+    elif len(header) == 14 and header[0] != "Studio":
+        # 14-Spalten-Schema ohne Studio-Spalte → Studio=charlottenburg voranstellen
+        new_rows = [["charlottenburg"] + row for row in rows[1:] if row]
+        with open(CSV_FILE, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f, delimiter=";")
+            w.writerow(COLUMNS)
+            w.writerows(new_rows)
+        print("CSV migriert: Studio-Spalte (charlottenburg) hinzugefügt")
 
 # ── In CSV speichern ─────────────────────────────────────────────────────────
 
 def save(key: str, value: int, weather: dict, holidays: set, ferien: list):
     now = datetime.now(BERLIN)
     today = now.date()
-    path = csv_path(key)
-    is_new = not path.exists()
+    is_new = not CSV_FILE.exists()
     DATA_DIR.mkdir(exist_ok=True)
 
-    row = {
-        "Datum":              now.strftime("%Y-%m-%d"),
-        "Uhrzeit":            now.strftime("%H:%M"),
-        "Wochentag":          WOCHENTAGE_DE[now.weekday()],
-        "Stunde":             now.hour,
-        "Tagesphase":         tagesphase(now.hour),
-        "Auslastung_%":       value,
-        "Temperatur_C":       weather["Temperatur_C"],
-        "Niederschlag_mm":    weather["Niederschlag_mm"],
-        "Wettercode":         weather["Wettercode"],
-        "Bewoelkung_%":       weather["Bewoelkung_%"],
-        "Wind_kmh":           weather["Wind_kmh"],
-        "Ist_Wochenende":     int(now.weekday() >= 5),
-        "Ist_Feiertag_BE":    int(today in holidays),
-        "Ist_Schulferien_BE": int(is_school_holiday(today, ferien)),
-    }
+    row = [
+        key,
+        now.strftime("%Y-%m-%d"),
+        now.strftime("%H:%M"),
+        WOCHENTAGE_DE[now.weekday()],
+        now.hour,
+        tagesphase(now.hour),
+        value,
+        weather["Temperatur_C"],
+        weather["Niederschlag_mm"],
+        weather["Wettercode"],
+        weather["Bewoelkung_%"],
+        weather["Wind_kmh"],
+        int(now.weekday() >= 5),
+        int(today in holidays),
+        int(is_school_holiday(today, ferien)),
+    ]
 
-    with open(path, "a", newline="", encoding="utf-8") as f:
+    with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
         w = csv.writer(f, delimiter=";")
         if is_new:
             w.writerow(COLUMNS)
-        w.writerow([row[c] for c in COLUMNS])
+        w.writerow(row)
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    migrate_old_filename()
-    for key in GYMS:
-        migrate_schema_if_needed(key)
+    migrate_csv_if_needed()
 
     id_token = get_id_token()
     weather  = fetch_weather()

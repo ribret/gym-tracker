@@ -2,7 +2,7 @@ name: Gym Utilization Tracker
 
 on:
   schedule:
-    - cron: "0,15,30,45 * * * *"   # alle 15 Minuten
+    - cron: "0,30 * * * *"          # alle 30 Minuten
   workflow_dispatch:                 # manueller Start-Button im GitHub UI
 
 jobs:

@@ -6,7 +6,7 @@
 
 ## Worum es geht
 
-Richard sammelt seit Mai 2026 die Auslastung seines JOHN REED Berlin Charlottenburg im 15-Minuten-Takt — mit dem Ziel, später Prognosen treffen zu können („wie voll wird's am Donnerstag um 18 Uhr bei Sonne?").
+Richard sammelt seit Mai 2026 die Auslastung aller 7 JOHN REED Berlin Studios im 30-Minuten-Takt — mit dem Ziel, später Prognosen treffen zu können („wie voll wird's am Donnerstag um 18 Uhr bei Sonne?").
 
 Die App des Fitnessstudios (One Member, RSG Group) zeigt die Live-Auslastung nur im iPhone an. Ein Web-Endpoint existiert offiziell nicht. Wir haben den App-Endpoint per Proxyman-MITM identifiziert und automatisieren ihn jetzt.
 
@@ -15,20 +15,19 @@ Die App des Fitnessstudios (One Member, RSG Group) zeigt die Live-Auslastung nur
 ## Architektur in 30 Sekunden
 
 ```
-GitHub Actions (cron alle 15 min)
+GitHub Actions (cron alle 30 min)
   │
   ├── Firebase Refresh Token (GitHub Secret)
   │      ↓ POST securetoken.googleapis.com
   │   ID Token (1h gültig)
   │
-  ├── GET app-api.rsg.mamba-app.one-member.com/gyms/johnreed/gym/{ID}/utilization
-  │   → Auslastung[aktuelle_stunde] in %
-  │
-  ├── GET Open-Meteo → Wetter (Temp, Regen, Bewölkung, Wind)
+  ├── GET Open-Meteo → Wetter (Temp, Regen, Bewölkung, Wind) — einmal pro Run
   ├── GET feiertage-api.de → Berlin-Feiertage
-  └── GET ferien-api.de → Berlin-Schulferien
+  ├── GET ferien-api.de → Berlin-Schulferien
+  │
+  └── 7× GET /gyms/johnreed/gym/{ID}/utilization (alle Berliner Studios)
+      → je eine neue Zeile in data/gym_utilization.csv
   
-  ↓ Eine neue Zeile in data/gym_utilization.csv
   ↓ Auto-Commit zurück ins Repo
 ```
 
@@ -47,39 +46,41 @@ GitHub Actions (cron alle 15 min)
 | Datei | Zweck |
 |-------|-------|
 | `gym_tracker.py` | Kernskript — Token-Refresh, Datenabruf für alle 7 Studios, CSV-Schreiben |
-| `.github/workflows/collect.yml` | Cron-Definition (alle 15 Min) + Commit-Logik |
+| `.github/workflows/collect.yml` | Cron-Definition (alle 30 Min) + Commit-Logik |
 | `requirements.txt` | nur `requests` |
 | `pyproject.toml` | Projekt-Metadaten für lokale Entwicklung |
-| `data/{studio}.csv` | je Studio eine Datei, wächst pro Run um eine Zeile |
+| `data/gym_utilization.csv` | alle Studios in einer Datei, wächst pro Run um 7 Zeilen |
 | `README.md` | Setup-Anleitung |
-
-**Studios & Dateien:**
-
-| Datei | Studio | Firebase-ID |
-|-------|--------|-------------|
-| `data/charlottenburg.csv` | JOHN REED Berlin Charlottenburg | `mL6O8ISwlk5tQt7mnwjo` |
-| `data/kreuzberg.csv` | JOHN REED Berlin Kreuzberg | `EbbAsfOAYjJK7frGwSQc` |
-| `data/prenzlauer_berg.csv` | JOHN REED Berlin Prenzlauer Berg | `QDsORQIS4OlDuDDs9BMD` |
-| `data/boetzow.csv` | JOHN REED Berlin-Bötzow | `0B2lUvpIWFeuHJOIOXFi` |
-| `data/friedrichshain.csv` | JOHN REED Berlin-Friedrichshain | `rUN5RetcHHWRWEl978s7` |
-| `data/womens_club.csv` | JOHN REED Women's Club | `K2cAluM4mcXVbfSDPPdB` |
-| `data/gesundbrunnen.csv` | JOHN REED Berlin Gesundbrunnen | `zChJkIuvStyOUunjqMW1` |
 
 ---
 
 ## Datenmodell (CSV)
 
-Trennzeichen: `;` (für deutsches Excel). 14 Spalten:
+Trennzeichen: `;` (für deutsches Excel). 15 Spalten:
 
 ```
-Datum;Uhrzeit;Wochentag;Stunde;Tagesphase;Auslastung_%;
+Studio;Datum;Uhrzeit;Wochentag;Stunde;Tagesphase;Auslastung_%;
 Temperatur_C;Niederschlag_mm;Wettercode;Bewoelkung_%;Wind_kmh;
 Ist_Wochenende;Ist_Feiertag_BE;Ist_Schulferien_BE
 ```
 
+- **Studio** = Schlüssel des Studios (z.B. `charlottenburg`, `kreuzberg`, …)
 - **Wettercode** = WMO-Standard (0=klar, 3=bedeckt, 51-67=Regen, 71-77=Schnee, 95+=Gewitter)
 - **Tagesphase** = Morgen (5-11), Mittag (12-16), Abend (17-22), Nacht (23-4)
-- Historische Zeilen (vor Phase 1) haben leere Wetter-Spalten
+- Wetter wird einmal pro Run für alle Studios geteilt (Berlin Mitte, 52.52/13.40)
+- Historische Zeilen (vor Phase 1) haben leere Wetter-Spalten; Studio=charlottenburg
+
+**Studio-Schlüssel → Firebase-ID:**
+
+| Studio-Schlüssel | Firebase-ID |
+|-----------------|-------------|
+| `charlottenburg` | `mL6O8ISwlk5tQt7mnwjo` |
+| `kreuzberg` | `EbbAsfOAYjJK7frGwSQc` |
+| `prenzlauer_berg` | `QDsORQIS4OlDuDDs9BMD` |
+| `boetzow` | `0B2lUvpIWFeuHJOIOXFi` |
+| `friedrichshain` | `rUN5RetcHHWRWEl978s7` |
+| `womens_club` | `K2cAluM4mcXVbfSDPPdB` |
+| `gesundbrunnen` | `zChJkIuvStyOUunjqMW1` |
 
 ---
 
@@ -131,7 +132,7 @@ Token ist abgelaufen. Schritte:
 - ✓ Wetter (Open-Meteo), Berlin-Feiertage, Berlin-Schulferien
 - ✓ Migration der Bestandsdaten auf neues Schema
 - ✓ Alle 7 Berliner Studios per Proxyman + Validation-Script identifiziert
-- ✓ Multi-Studio-Tracking: 7 Studios parallel, je eigene CSV in `data/`
+- ✓ Multi-Studio-Tracking: 7 Studios parallel, gemeinsame CSV, 30-Min-Takt
 
 **Was jetzt passiert:**
 Mindestens 3 Wochen Daten sammeln lassen — vorher wenig Aussagekraft. Bandbreite an Wetterlagen + ein paar Wochenenden + Werktag-Variation nötig.
