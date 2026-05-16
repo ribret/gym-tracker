@@ -28,7 +28,7 @@ GitHub → Repository → **Settings → Secrets and variables → Actions → N
 
 | Secret-Name | Wert |
 |-------------|------|
-| `FIREBASE_API_KEY` | `AIzaSyDPv-q00DmSUpYqFqY43tN03ZezHNJY_eg` |
+| `FIREBASE_API_KEY` | `AIz...` |
 | `FIREBASE_REFRESH_TOKEN` | den langen Token aus Proxyman (Request-Body) |
 
 ### 4. GitHub Actions aktivieren
