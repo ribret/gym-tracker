@@ -8,7 +8,10 @@ import os
 import csv
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
+
+BERLIN = ZoneInfo("Europe/Berlin")
 
 # ── Konfiguration (via Umgebungsvariablen / GitHub Secrets) ─────────────────
 
@@ -51,13 +54,13 @@ def fetch_utilization(id_token: str) -> int:
     resp = requests.get(ENDPOINT, headers=headers, timeout=10)
     resp.raise_for_status()
     utilization = resp.json()["data"]["utilization"]
-    current_hour = str(datetime.now().hour)
+    current_hour = str(datetime.now(BERLIN).hour)
     return int(utilization.get(current_hour, 0))
 
 # ── In CSV speichern ─────────────────────────────────────────────────────────
 
 def save(value: int):
-    now = datetime.now()
+    now = datetime.now(BERLIN)
     is_new = not CSV_FILE.exists()
     CSV_FILE.parent.mkdir(exist_ok=True)
     with open(CSV_FILE, "a", newline="", encoding="utf-8") as f:
