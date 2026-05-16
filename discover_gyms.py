@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """
-Discover John Reed Berlin gym IDs — v3.
-Confirmed Berlin clubs on website: charlottenburg, prenzlauer-berg, friedrichshain, kreuzberg
-Strategy: find Firebase IDs in embedded page JSON (Next.js/__NEXT_DATA__, Yext API keys, script tags)
+Discover John Reed Berlin gym IDs — v4.
+Confirmed: charlottenburg, prenzlauer-berg, friedrichshain, kreuzberg, gesundbrunnen
+New strategies:
+- Parse full __NEXT_DATA__ JSON recursively for any ID-like field
+- Try Next.js static data routes: /_next/data/{buildId}/clubs/{slug}.json
+- Search for mamba-app.one-member.com references in page source
 """
 
-import os, json, re, requests, xml.etree.ElementTree as ET
+import os, json, re, requests
 
 FIREBASE_API_KEY       = os.environ["FIREBASE_API_KEY"]
 FIREBASE_REFRESH_TOKEN = os.environ["FIREBASE_REFRESH_TOKEN"]
@@ -14,36 +17,18 @@ BRAND_ID = "johnreed"
 BASE     = "https://app-api.rsg.mamba-app.one-member.com"
 KNOWN_ID = "mL6O8ISwlk5tQt7mnwjo"  # Charlottenburg
 
-# All Berlin slugs to test (expanded list)
-BERLIN_SLUGS = [
+CONFIRMED_SLUGS = [
     "berlin-charlottenburg",
     "berlin-prenzlauer-berg",
     "berlin-friedrichshain",
     "berlin-kreuzberg",
-    "berlin-mitte",
-    "berlin-wedding",
     "berlin-gesundbrunnen",
-    "berlin-neukoelln",
-    "berlin-neukölln",
-    "berlin-tempelhof",
-    "berlin-schoeneberg",
-    "berlin-schöneberg",
-    "berlin-steglitz",
-    "berlin-spandau",
-    "berlin-lichtenberg",
-    "berlin-treptow",
-    "berlin-pankow",
-    "berlin-reinickendorf",
-    "berlin-wilmersdorf",
-    "berlin-zehlendorf",
-    "berlin-koepenick",
-    "berlin-marzahn",
 ]
 
 BROWSER_HEADERS = {
     "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+    "Accept-Language": "de-DE,de;q=0.9",
 }
 
 def get_id_token():
@@ -67,179 +52,175 @@ def api_headers(token):
         "User-Agent": "ktor-client",
     }
 
-def fetch_page(url):
+def fetch(url, headers=BROWSER_HEADERS):
     try:
-        r = requests.get(url, headers=BROWSER_HEADERS, timeout=15)
+        r = requests.get(url, headers=headers, timeout=15)
         return r
     except Exception as e:
         print(f"  ERR {url}: {e}")
         return None
 
 def validate_gym_id(token, gym_id):
-    """Returns gym name if ID is valid, else None."""
     try:
-        r = requests.get(
-            f"{BASE}/gyms/{BRAND_ID}/gym/{gym_id}",
-            headers=api_headers(token),
-            timeout=8,
-        )
+        r = requests.get(f"{BASE}/gyms/{BRAND_ID}/gym/{gym_id}", headers=api_headers(token), timeout=8)
         if r.status_code == 200:
-            data = r.json().get("data", {})
-            return data.get("name", "?")
+            return r.json().get("data", {}).get("name")
     except:
         pass
     return None
 
-def extract_json_blobs(html):
-    """Extract all JSON objects/arrays from HTML."""
-    blobs = []
-    # Next.js __NEXT_DATA__
-    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-    if m:
-        blobs.append(("__NEXT_DATA__", m.group(1)))
-    # Nuxt __NUXT__
-    m = re.search(r'window\.__NUXT__\s*=\s*(\{.*?\})\s*;', html, re.DOTALL)
-    if m:
-        blobs.append(("__NUXT__", m.group(1)[:5000]))
-    # Generic window.* assignments with objects
-    for match in re.finditer(r'window\.(\w+)\s*=\s*(\{[^;]{20,500}\})\s*;', html):
-        blobs.append((f"window.{match.group(1)}", match.group(2)))
-    # application/json script tags
-    for match in re.finditer(r'<script[^>]+type="application/json"[^>]*>(.*?)</script>', html, re.DOTALL):
-        blobs.append(("application/json", match.group(1)[:2000]))
-    # application/ld+json (structured data — often contains location IDs)
-    for match in re.finditer(r'<script[^>]+type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL):
-        blobs.append(("ld+json", match.group(1)[:2000]))
-    return blobs
+def walk_json(obj, path=""):
+    """Recursively walk JSON, yield (path, value) for string leaves."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            yield from walk_json(v, f"{path}.{k}")
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from walk_json(v, f"{path}[{i}]")
+    elif isinstance(obj, str):
+        yield path, obj
 
-def find_firebase_ids(text):
-    """Firebase Firestore IDs: 20 alphanumeric chars, not pure camelCase."""
-    candidates = re.findall(r'["\']([A-Za-z0-9]{20})["\']', text)
-    # Filter out obvious camelCase variable names (contain no digits)
-    return [c for c in set(candidates) if re.search(r'\d', c)]
+def looks_like_firebase_id(s):
+    return (
+        len(s) == 20
+        and re.fullmatch(r'[A-Za-z0-9]{20}', s)
+        and bool(re.search(r'\d', s))
+        and not s.islower()
+        and not s.isupper()
+        and not s[0].isupper() or bool(re.search(r'\d', s[:4]))  # avoid pure camelCase
+    )
 
-def find_yext_keys(html):
-    """Look for Yext API keys (format: api_key=XXXX or similar)."""
-    patterns = [
-        r'api[_-]?key["\s:=]+([a-zA-Z0-9_\-]{20,60})',
-        r'yext["\s:=]+([a-zA-Z0-9_\-]{20,60})',
-        r'liveapi\.yext\.com[^"]*api_key=([^&"]+)',
-    ]
-    found = []
-    for p in patterns:
-        found.extend(re.findall(p, html, re.IGNORECASE))
-    return list(set(found))
-
-# ─────────────────────────────────────────────────────────────────────────────
+def find_ids_in_json(obj, context_filter=None):
+    """Walk JSON tree, return (path, value) where value looks like a Firebase ID."""
+    results = []
+    for path, value in walk_json(obj):
+        if looks_like_firebase_id(value):
+            if context_filter is None or any(k in path.lower() for k in context_filter):
+                results.append((path, value))
+    return results
 
 def main():
     print("=== Firebase Token ===")
     token = get_id_token()
     print("OK\n")
 
-    valid_gyms = {}  # slug → (id, name)
+    found_ids = {}  # id → name
+    build_id = None
 
-    # ── 1. Alle Berlin-Slugs testen + Deep-Scrape ──────────────────────────
-    print("=== Berlin-Slugs: Seiten abrufen und auf IDs analysieren ===")
-    working_slugs = []
-    for slug in BERLIN_SLUGS:
+    # ── 1. __NEXT_DATA__ vollständig parsen ──────────────────────────────────
+    print("=== __NEXT_DATA__ vollständig parsen ===")
+    for slug in CONFIRMED_SLUGS:
         url = f"https://johnreed.fitness/clubs/{slug}"
-        r = fetch_page(url)
-        status = r.status_code if r else "ERR"
-        print(f"  {status}  {url}")
-        if r and r.status_code == 200:
-            working_slugs.append((slug, r.text))
+        r = fetch(url)
+        if not r or r.status_code != 200:
+            print(f"  SKIP {slug}")
+            continue
 
-    print(f"\nAktive Slugs: {[s for s, _ in working_slugs]}\n")
+        # Build ID extrahieren (für static routes)
+        if not build_id:
+            m = re.search(r'"buildId"\s*:\s*"([^"]+)"', r.text)
+            if m:
+                build_id = m.group(1)
+                print(f"  Next.js buildId: {build_id}")
 
-    # ── 2. Jeden aktiven Slug deep-analysen ──────────────────────────────
-    print("=== Deep-Analyse der aktiven Club-Seiten ===")
-    all_candidate_ids = set()
+        # __NEXT_DATA__ extrahieren
+        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.DOTALL)
+        if not m:
+            print(f"  {slug}: kein __NEXT_DATA__")
+            continue
 
-    for slug, html in working_slugs:
-        print(f"\n--- {slug} ---")
+        try:
+            data = json.loads(m.group(1))
+        except json.JSONDecodeError as e:
+            print(f"  {slug}: JSON-Parse-Fehler: {e}")
+            continue
 
-        # Yext-Keys
-        yext_keys = find_yext_keys(html)
-        if yext_keys:
-            print(f"  Yext-Keys: {yext_keys}")
+        # Alle String-Felder durchsuchen, die Firebase-ID-ähnlich sind
+        all_ids = find_ids_in_json(data)
+        gym_ids = [(p, v) for p, v in all_ids
+                   if any(k in p.lower() for k in ['id', 'gym', 'studio', 'club', 'key', 'ref'])]
 
-        # Firebase-ID-Kandidaten aus dem HTML
-        fb_ids = find_firebase_ids(html)
-        if fb_ids:
-            print(f"  Firebase-ID-Kandidaten: {fb_ids}")
-            all_candidate_ids.update(fb_ids)
-        else:
-            print(f"  Keine Firebase-ID-Kandidaten im Raw-HTML")
+        # Auch alle übrigen ausgeben
+        other_ids = [(p, v) for p, v in all_ids if (p, v) not in gym_ids]
 
-        # JSON-Blobs
-        blobs = extract_json_blobs(html)
-        if blobs:
-            for name, blob in blobs:
-                print(f"  JSON-Blob gefunden: [{name}] (erste 500 Zeichen):")
-                print(f"    {blob[:500]}")
-                blob_ids = find_firebase_ids(blob)
-                if blob_ids:
-                    print(f"    IDs im Blob: {blob_ids}")
-                    all_candidate_ids.update(blob_ids)
-        else:
-            print(f"  Keine JSON-Blobs gefunden")
+        print(f"\n  [{slug}]")
+        if gym_ids:
+            print(f"    ID-relevante Felder: {gym_ids}")
+        if other_ids:
+            print(f"    Andere ID-Kandidaten (erste 5): {other_ids[:5]}")
+        if not all_ids:
+            print(f"    Keine Firebase-ID-Kandidaten in __NEXT_DATA__")
 
-        # Roh-Suche nach dem Muster der bekannten ID im HTML
-        # (suche nach Strings ähnlich zu mL6O8ISwlk5tQt7mnwjo)
-        raw_ids = re.findall(r'[A-Z][a-zA-Z0-9]{18}[a-zA-Z0-9]', html)
-        non_camel = [x for x in set(raw_ids) if re.search(r'\d', x) and not x[0:3].isupper()]
-        if non_camel:
-            print(f"  Weitere ID-Kandidaten (unquoted): {non_camel[:10]}")
-            all_candidate_ids.update(non_camel)
+        # Auch nach mamba-app-Referenzen suchen
+        mamba_refs = re.findall(r'mamba-app[^\s"\'<>]{5,100}', r.text)
+        if mamba_refs:
+            print(f"    mamba-app Referenzen: {mamba_refs}")
 
-    # ── 3. Alle Kandidaten gegen die API validieren ──────────────────────
-    print(f"\n=== API-Validierung von {len(all_candidate_ids)} ID-Kandidaten ===")
-    # Bekannte ID ausschließen
-    candidates_to_test = all_candidate_ids - {KNOWN_ID}
-    if not candidates_to_test:
-        print("  Keine neuen Kandidaten zum Testen.")
+        # Alle alphanumerischen Strings aus dem RAW HTML (nicht nur quoted)
+        raw_candidates = re.findall(r'[^A-Za-z0-9]([A-Za-z0-9]{20})[^A-Za-z0-9]', r.text)
+        firebase_like = [c for c in set(raw_candidates)
+                         if re.search(r'\d', c) and not c.startswith('R0lG')]
+        if firebase_like:
+            print(f"    Raw ID-Kandidaten (erste 10): {firebase_like[:10]}")
+
+    print()
+
+    # ── 2. Next.js Static Data Routes ───────────────────────────────────────
+    print("=== Next.js Static Routes (/_next/data/{buildId}/clubs/{slug}.json) ===")
+    if build_id:
+        print(f"  Verwende buildId: {build_id}")
+        for slug in CONFIRMED_SLUGS:
+            url = f"https://johnreed.fitness/_next/data/{build_id}/clubs/{slug}.json"
+            r = fetch(url)
+            status = r.status_code if r else "ERR"
+            print(f"  {status}  {url}")
+            if r and r.status_code == 200:
+                try:
+                    data = r.json()
+                    all_ids = find_ids_in_json(data)
+                    if all_ids:
+                        print(f"    Firebase-ID-Kandidaten: {all_ids}")
+                    print(f"    Vollständiger Inhalt (erste 1000 Zeichen):")
+                    print(f"    {json.dumps(data)[:1000]}")
+                except:
+                    print(f"    Raw: {r.text[:500]}")
     else:
-        for cid in sorted(candidates_to_test):
+        print("  Kein buildId gefunden.")
+    print()
+
+    # ── 3. Alternativer URL-Pfad /studio/ ────────────────────────────────────
+    print("=== Alternativpfad /studio/ testen ===")
+    studio_slugs_extra = [
+        "berlin-mitte", "berlin-neukoelln", "berlin-tempelhof",
+        "berlin-spandau", "berlin-steglitz", "berlin-schoeneberg",
+    ]
+    for slug in studio_slugs_extra:
+        for path_prefix in ["/studio/", "/clubs/"]:
+            r = fetch(f"https://johnreed.fitness{path_prefix}{slug}")
+            if r and r.status_code == 200:
+                print(f"  200  https://johnreed.fitness{path_prefix}{slug}  ← NEU!")
+    print()
+
+    # ── 4. API-Validierung aller bisher gefundenen Kandidaten ────────────────
+    to_validate = set(found_ids.keys())
+    if to_validate:
+        print(f"=== API-Validierung von {len(to_validate)} Kandidaten ===")
+        for cid in to_validate:
             name = validate_gym_id(token, cid)
             if name:
-                print(f"  ✓ TREFFER: {cid} → {name}")
-                valid_gyms[cid] = name
+                print(f"  ✓ {cid} → {name}")
             else:
                 print(f"  ✗ {cid}")
 
-    # ── 4. Yext Knowledge Graph (falls Key gefunden) ──────────────────────
-    print("\n=== Yext-Suche nach Berlin-Gyms ===")
-    # Versuche die Yext-CDN-URL-Struktur zu nutzen, um den Yext Account zu finden
-    # a.mktgcdn.com URLs enthalten Account-IDs im Pfad
-    if working_slugs:
-        sample_html = working_slugs[0][1]
-        # Extrahiere Account-ID aus mktgcdn URLs
-        mktg_ids = re.findall(r'a\.mktgcdn\.com/p/([A-Za-z0-9_\-]{20,60})/', sample_html)
-        if mktg_ids:
-            print(f"  mktgcdn Bild-IDs (erste 3): {mktg_ids[:3]}")
-
-    # Versuche Yext Live API ohne Key (manchmal öffentlich)
-    yext_urls = [
-        "https://liveapi.yext.com/v2/accounts/me/entities/geosearch?radius=25&unit=mi&latitude=52.52&longitude=13.40&entityTypes=location&limit=50&v=20231201",
-        "https://cdn.yextapis.com/v2/accounts/me/answers/vertical/query?experienceKey=john-reed&api_key=&v=20220511&input=berlin&verticalKey=locations",
-    ]
-    for url in yext_urls:
-        try:
-            r = requests.get(url, timeout=8)
-            print(f"  {r.status_code}  {url[:80]}")
-            if r.status_code == 200:
-                print(r.text[:1000])
-        except Exception as e:
-            print(f"  ERR: {e}")
-
-    # ── 5. Zusammenfassung ────────────────────────────────────────────────
+    # ── 5. Zusammenfassung ───────────────────────────────────────────────────
     print("\n=== ZUSAMMENFASSUNG ===")
-    print(f"Bekannte Studios:")
-    print(f"  mL6O8ISwlk5tQt7mnwjo → JOHN REED Berlin Charlottenburg (Referenz)")
-    for gym_id, name in valid_gyms.items():
+    print("Bestätigte Berliner Studios (Website):")
+    for s in CONFIRMED_SLUGS:
+        print(f"  https://johnreed.fitness/clubs/{s}")
+    print(f"\nBestätigte Firebase-IDs:")
+    print(f"  mL6O8ISwlk5tQt7mnwjo → JOHN REED Berlin Charlottenburg")
+    for gym_id, name in found_ids.items():
         print(f"  {gym_id} → {name}")
-    print(f"\nWebsite-aktive Slugs ohne bestätigte ID: {[s for s, _ in working_slugs if s != 'berlin-charlottenburg']}")
 
 if __name__ == "__main__":
     main()
