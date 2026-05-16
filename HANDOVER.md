@@ -37,7 +37,7 @@ GitHub Actions (cron alle 15 min)
 ## Live-Links
 
 - **Repo:** https://github.com/ribret/gym-tracker (public)
-- **Daten:** https://github.com/ribret/gym-tracker/blob/main/data/gym_utilization.csv
+- **Daten:** https://github.com/ribret/gym-tracker/tree/main/data
 - **Actions-Log:** https://github.com/ribret/gym-tracker/actions
 
 ---
@@ -46,12 +46,24 @@ GitHub Actions (cron alle 15 min)
 
 | Datei | Zweck |
 |-------|-------|
-| `gym_tracker.py` | Kernskript — Token-Refresh, Datenabruf, CSV-Schreiben |
+| `gym_tracker.py` | Kernskript — Token-Refresh, Datenabruf für alle 7 Studios, CSV-Schreiben |
 | `.github/workflows/collect.yml` | Cron-Definition (alle 15 Min) + Commit-Logik |
 | `requirements.txt` | nur `requests` |
 | `pyproject.toml` | Projekt-Metadaten für lokale Entwicklung |
-| `data/gym_utilization.csv` | wächst pro Run um eine Zeile |
+| `data/{studio}.csv` | je Studio eine Datei, wächst pro Run um eine Zeile |
 | `README.md` | Setup-Anleitung |
+
+**Studios & Dateien:**
+
+| Datei | Studio | Firebase-ID |
+|-------|--------|-------------|
+| `data/charlottenburg.csv` | JOHN REED Berlin Charlottenburg | `mL6O8ISwlk5tQt7mnwjo` |
+| `data/kreuzberg.csv` | JOHN REED Berlin Kreuzberg | `EbbAsfOAYjJK7frGwSQc` |
+| `data/prenzlauer_berg.csv` | JOHN REED Berlin Prenzlauer Berg | `QDsORQIS4OlDuDDs9BMD` |
+| `data/boetzow.csv` | JOHN REED Berlin-Bötzow | `0B2lUvpIWFeuHJOIOXFi` |
+| `data/friedrichshain.csv` | JOHN REED Berlin-Friedrichshain | `rUN5RetcHHWRWEl978s7` |
+| `data/womens_club.csv` | JOHN REED Women's Club | `K2cAluM4mcXVbfSDPPdB` |
+| `data/gesundbrunnen.csv` | JOHN REED Berlin Gesundbrunnen | `zChJkIuvStyOUunjqMW1` |
 
 ---
 
@@ -113,11 +125,13 @@ Token ist abgelaufen. Schritte:
 ## Status & nächste Schritte
 
 **Phase 1 (abgeschlossen, 16.05.2026):**
-- ✓ Endpoint identifiziert: `GET /gyms/johnreed/gym/mL6O8ISwlk5tQt7mnwjo/utilization`
+- ✓ Endpoint identifiziert: `GET /gyms/johnreed/gym/{ID}/utilization`
 - ✓ Firebase Auth-Flow automatisiert
 - ✓ GitHub Actions Cron läuft alle 15 Min
 - ✓ Wetter (Open-Meteo), Berlin-Feiertage, Berlin-Schulferien
 - ✓ Migration der Bestandsdaten auf neues Schema
+- ✓ Alle 7 Berliner Studios per Proxyman + Validation-Script identifiziert
+- ✓ Multi-Studio-Tracking: 7 Studios parallel, je eigene CSV in `data/`
 
 **Was jetzt passiert:**
 Mindestens 3 Wochen Daten sammeln lassen — vorher wenig Aussagekraft. Bandbreite an Wetterlagen + ein paar Wochenenden + Werktag-Variation nötig.
