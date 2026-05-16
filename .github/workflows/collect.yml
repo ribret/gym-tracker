@@ -1,0 +1,38 @@
+name: Gym Utilization Tracker
+
+on:
+  schedule:
+    - cron: "0,15,30,45 * * * *"   # alle 15 Minuten
+  workflow_dispatch:                 # manueller Start-Button im GitHub UI
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Python Setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencies
+        run: pip install requests
+
+      - name: Run Tracker
+        env:
+          FIREBASE_API_KEY:       ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_REFRESH_TOKEN: ${{ secrets.FIREBASE_REFRESH_TOKEN }}
+        run: python gym_tracker.py
+
+      - name: Commit CSV
+        run: |
+          git config user.name  "gym-tracker[bot]"
+          git config user.email "gym-tracker@users.noreply.github.com"
+          git add data/gym_utilization.csv
+          git diff --cached --quiet || git commit -m "data: $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git push
