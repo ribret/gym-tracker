@@ -1,0 +1,25 @@
+name: Validate Firebase IDs (einmalig)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install requests
+
+      - name: Run Validation
+        env:
+          FIREBASE_API_KEY:       ${{ secrets.FIREBASE_API_KEY }}
+          FIREBASE_REFRESH_TOKEN: ${{ secrets.FIREBASE_REFRESH_TOKEN }}
+        run: python validate_ids.py
