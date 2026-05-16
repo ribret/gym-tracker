@@ -75,7 +75,7 @@ Ist_Wochenende;Ist_Feiertag_BE;Ist_Schulferien_BE
 
 | Secret | Wert | Quelle |
 |--------|------|--------|
-| `FIREBASE_API_KEY` | `AIzaSyDPv-q00DmSUpYqFqY43tN03ZezHNJY_eg` | Öffentlich (in App-Bundle eingebettet) |
+| `FIREBASE_API_KEY` | `AIzaSy...` (im GitHub Secret hinterlegt) | Öffentlich (in App-Bundle eingebettet) |
 | `FIREBASE_REFRESH_TOKEN` | langer String, beginnt mit `AMf-vBx0ma...` | Aus Proxyman — siehe Recovery |
 
 Der Refresh Token läuft erst ab, wenn Richard sich in der App abmeldet oder das Passwort ändert.
