@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
 """
-Discover John Reed Berlin gym IDs — v4.
-Confirmed: charlottenburg, prenzlauer-berg, friedrichshain, kreuzberg, gesundbrunnen
-New strategies:
-- Parse full __NEXT_DATA__ JSON recursively for any ID-like field
-- Try Next.js static data routes: /_next/data/{buildId}/clubs/{slug}.json
-- Search for mamba-app.one-member.com references in page source
+Discover John Reed Berlin gym IDs — v5.
+KEY FINDING: Each club page contains mlStudioID (Magicline numeric ID).
+Strategy: test if RSG API accepts mlStudioID as gym ID, or find mapping endpoint.
+
+Known mlStudioIDs from __NEXT_DATA__:
+  3818598990  → Charlottenburg (Firebase: mL6O8ISwlk5tQt7mnwjo)
+  1404492860  → Prenzlauer Berg
+  3946841990  → Friedrichshain
+  1414215390  → Kreuzberg
+  1414770410  → Gesundbrunnen
+  ???         → Bötzow        (need to scrape)
+  ???         → Women's Club  (need to scrape)
 """
 
 import os, json, re, requests
@@ -13,21 +19,32 @@ import os, json, re, requests
 FIREBASE_API_KEY       = os.environ["FIREBASE_API_KEY"]
 FIREBASE_REFRESH_TOKEN = os.environ["FIREBASE_REFRESH_TOKEN"]
 
-BRAND_ID = "johnreed"
-BASE     = "https://app-api.rsg.mamba-app.one-member.com"
-KNOWN_ID = "mL6O8ISwlk5tQt7mnwjo"  # Charlottenburg
+BRAND_ID  = "johnreed"
+BASE      = "https://app-api.rsg.mamba-app.one-member.com"
+KNOWN_FIREBASE_ID = "mL6O8ISwlk5tQt7mnwjo"
 
-CONFIRMED_SLUGS = [
-    "berlin-charlottenburg",
-    "berlin-prenzlauer-berg",
-    "berlin-friedrichshain",
-    "berlin-kreuzberg",
-    "berlin-gesundbrunnen",
+# Known from __NEXT_DATA__ scraping
+STUDIOS = {
+    "berlin-charlottenburg":   {"mlId": "3818598990", "firebase": KNOWN_FIREBASE_ID},
+    "berlin-prenzlauer-berg":  {"mlId": "1404492860", "firebase": None},
+    "berlin-friedrichshain":   {"mlId": "3946841990", "firebase": None},
+    "berlin-kreuzberg":        {"mlId": "1414215390", "firebase": None},
+    "berlin-gesundbrunnen":    {"mlId": "1414770410", "firebase": None},
+    "berlin-boetzow":          {"mlId": None,          "firebase": None},
+    "berlin-womens-prenzlauer-berg": {"mlId": None,    "firebase": None},
+}
+
+EXTRA_SLUGS = [
+    "berlin-boetzow", "berlin-bötzow",
+    "berlin-womens-prenzlauer-berg", "berlin-women-prenzlauer-berg",
+    "berlin-prenzlauer-berg-women", "berlin-prenzlauer-berg-womens-club",
+    "berlin-womens-club-prenzlauer-berg", "berlin-damen-prenzlauer-berg",
+    "berlin-womens", "berlin-women",
 ]
 
 BROWSER_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+    "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
+    "Accept": "text/html,*/*;q=0.8",
     "Accept-Language": "de-DE,de;q=0.9",
 }
 
@@ -52,175 +69,91 @@ def api_headers(token):
         "User-Agent": "ktor-client",
     }
 
-def fetch(url, headers=BROWSER_HEADERS):
+def try_api(token, path):
+    url = BASE + path
     try:
-        r = requests.get(url, headers=headers, timeout=15)
+        r = requests.get(url, headers=api_headers(token), timeout=8)
+        print(f"  {r.status_code}  {url}")
+        if r.status_code == 200:
+            data = r.json()
+            print(f"    → {json.dumps(data)[:300]}")
         return r
     except Exception as e:
-        print(f"  ERR {url}: {e}")
+        print(f"  ERR  {url}: {e}")
         return None
 
-def validate_gym_id(token, gym_id):
+def get_studio_id_from_page(slug):
+    """Fetch club page and extract studioId from __NEXT_DATA__."""
+    url = f"https://johnreed.fitness/clubs/{slug}"
     try:
-        r = requests.get(f"{BASE}/gyms/{BRAND_ID}/gym/{gym_id}", headers=api_headers(token), timeout=8)
-        if r.status_code == 200:
-            return r.json().get("data", {}).get("name")
-    except:
-        pass
-    return None
-
-def walk_json(obj, path=""):
-    """Recursively walk JSON, yield (path, value) for string leaves."""
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            yield from walk_json(v, f"{path}.{k}")
-    elif isinstance(obj, list):
-        for i, v in enumerate(obj):
-            yield from walk_json(v, f"{path}[{i}]")
-    elif isinstance(obj, str):
-        yield path, obj
-
-def looks_like_firebase_id(s):
-    return (
-        len(s) == 20
-        and re.fullmatch(r'[A-Za-z0-9]{20}', s)
-        and bool(re.search(r'\d', s))
-        and not s.islower()
-        and not s.isupper()
-        and not s[0].isupper() or bool(re.search(r'\d', s[:4]))  # avoid pure camelCase
-    )
-
-def find_ids_in_json(obj, context_filter=None):
-    """Walk JSON tree, return (path, value) where value looks like a Firebase ID."""
-    results = []
-    for path, value in walk_json(obj):
-        if looks_like_firebase_id(value):
-            if context_filter is None or any(k in path.lower() for k in context_filter):
-                results.append((path, value))
-    return results
+        r = requests.get(url, headers=BROWSER_HEADERS, timeout=15)
+        if r.status_code != 200:
+            return None, r.status_code
+        m = re.search(r'"studioId"\s*:\s*"?(\d+)"?', r.text)
+        if m:
+            return m.group(1), 200
+        return None, 200
+    except Exception as e:
+        return None, f"ERR:{e}"
 
 def main():
     print("=== Firebase Token ===")
     token = get_id_token()
     print("OK\n")
 
-    found_ids = {}  # id → name
-    build_id = None
-
-    # ── 1. __NEXT_DATA__ vollständig parsen ──────────────────────────────────
-    print("=== __NEXT_DATA__ vollständig parsen ===")
-    for slug in CONFIRMED_SLUGS:
-        url = f"https://johnreed.fitness/clubs/{slug}"
-        r = fetch(url)
-        if not r or r.status_code != 200:
-            print(f"  SKIP {slug}")
-            continue
-
-        # Build ID extrahieren (für static routes)
-        if not build_id:
-            m = re.search(r'"buildId"\s*:\s*"([^"]+)"', r.text)
-            if m:
-                build_id = m.group(1)
-                print(f"  Next.js buildId: {build_id}")
-
-        # __NEXT_DATA__ extrahieren
-        m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.DOTALL)
-        if not m:
-            print(f"  {slug}: kein __NEXT_DATA__")
-            continue
-
-        try:
-            data = json.loads(m.group(1))
-        except json.JSONDecodeError as e:
-            print(f"  {slug}: JSON-Parse-Fehler: {e}")
-            continue
-
-        # Alle String-Felder durchsuchen, die Firebase-ID-ähnlich sind
-        all_ids = find_ids_in_json(data)
-        gym_ids = [(p, v) for p, v in all_ids
-                   if any(k in p.lower() for k in ['id', 'gym', 'studio', 'club', 'key', 'ref'])]
-
-        # Auch alle übrigen ausgeben
-        other_ids = [(p, v) for p, v in all_ids if (p, v) not in gym_ids]
-
-        print(f"\n  [{slug}]")
-        if gym_ids:
-            print(f"    ID-relevante Felder: {gym_ids}")
-        if other_ids:
-            print(f"    Andere ID-Kandidaten (erste 5): {other_ids[:5]}")
-        if not all_ids:
-            print(f"    Keine Firebase-ID-Kandidaten in __NEXT_DATA__")
-
-        # Auch nach mamba-app-Referenzen suchen
-        mamba_refs = re.findall(r'mamba-app[^\s"\'<>]{5,100}', r.text)
-        if mamba_refs:
-            print(f"    mamba-app Referenzen: {mamba_refs}")
-
-        # Alle alphanumerischen Strings aus dem RAW HTML (nicht nur quoted)
-        raw_candidates = re.findall(r'[^A-Za-z0-9]([A-Za-z0-9]{20})[^A-Za-z0-9]', r.text)
-        firebase_like = [c for c in set(raw_candidates)
-                         if re.search(r'\d', c) and not c.startswith('R0lG')]
-        if firebase_like:
-            print(f"    Raw ID-Kandidaten (erste 10): {firebase_like[:10]}")
-
+    # ── 1. Bötzow + Women's Club mlStudioID holen ─────────────────────────
+    print("=== Bötzow & Women's Club: mlStudioID suchen ===")
+    for slug in EXTRA_SLUGS:
+        ml_id, status = get_studio_id_from_page(slug)
+        print(f"  {status}  {slug}  →  mlStudioID={ml_id}")
+        if ml_id:
+            STUDIOS[slug] = {"mlId": ml_id, "firebase": None}
     print()
 
-    # ── 2. Next.js Static Data Routes ───────────────────────────────────────
-    print("=== Next.js Static Routes (/_next/data/{buildId}/clubs/{slug}.json) ===")
-    if build_id:
-        print(f"  Verwende buildId: {build_id}")
-        for slug in CONFIRMED_SLUGS:
-            url = f"https://johnreed.fitness/_next/data/{build_id}/clubs/{slug}.json"
-            r = fetch(url)
-            status = r.status_code if r else "ERR"
-            print(f"  {status}  {url}")
+    # ── 2. mlStudioID direkt als Gym-ID in RSG API testen ─────────────────
+    print("=== RSG API: mlStudioID als Gym-ID testen ===")
+    print("(Charlottenburg als Kontrolle: mlId=3818598990, Firebase=mL6O8ISwlk5tQt7mnwjo)")
+
+    for slug, info in STUDIOS.items():
+        ml_id = info["mlId"]
+        if not ml_id:
+            continue
+        print(f"\n  [{slug}] mlId={ml_id}")
+        for path_template in [
+            f"/gyms/{BRAND_ID}/gym/{ml_id}/utilization",
+            f"/gyms/{BRAND_ID}/gym/{ml_id}",
+        ]:
+            r = try_api(token, path_template)
             if r and r.status_code == 200:
-                try:
-                    data = r.json()
-                    all_ids = find_ids_in_json(data)
-                    if all_ids:
-                        print(f"    Firebase-ID-Kandidaten: {all_ids}")
-                    print(f"    Vollständiger Inhalt (erste 1000 Zeichen):")
-                    print(f"    {json.dumps(data)[:1000]}")
-                except:
-                    print(f"    Raw: {r.text[:500]}")
-    else:
-        print("  Kein buildId gefunden.")
+                print(f"    ✓ TREFFER mit mlId!")
     print()
 
-    # ── 3. Alternativer URL-Pfad /studio/ ────────────────────────────────────
-    print("=== Alternativpfad /studio/ testen ===")
-    studio_slugs_extra = [
-        "berlin-mitte", "berlin-neukoelln", "berlin-tempelhof",
-        "berlin-spandau", "berlin-steglitz", "berlin-schoeneberg",
+    # ── 3. Mapping-Endpoints testen ───────────────────────────────────────
+    print("=== Mapping-Endpoints: mlId → Firebase-ID ===")
+    test_ml_id = "3818598990"  # Charlottenburg
+    mapping_paths = [
+        f"/gyms/{BRAND_ID}/gym/by-magicline-id/{test_ml_id}",
+        f"/gyms/{BRAND_ID}/gym/by-ml-id/{test_ml_id}",
+        f"/gyms/{BRAND_ID}/gym/magicline/{test_ml_id}",
+        f"/gyms/{BRAND_ID}/gym/external/{test_ml_id}",
+        f"/gyms/{BRAND_ID}/studio/{test_ml_id}",
+        f"/magicline/gym/{test_ml_id}",
+        f"/gyms/{BRAND_ID}/gym?mlId={test_ml_id}",
+        f"/gyms/{BRAND_ID}/gym?externalId={test_ml_id}",
+        f"/gyms/{BRAND_ID}/gym?studioId={test_ml_id}",
     ]
-    for slug in studio_slugs_extra:
-        for path_prefix in ["/studio/", "/clubs/"]:
-            r = fetch(f"https://johnreed.fitness{path_prefix}{slug}")
-            if r and r.status_code == 200:
-                print(f"  200  https://johnreed.fitness{path_prefix}{slug}  ← NEU!")
+    for path in mapping_paths:
+        try_api(token, path)
     print()
 
-    # ── 4. API-Validierung aller bisher gefundenen Kandidaten ────────────────
-    to_validate = set(found_ids.keys())
-    if to_validate:
-        print(f"=== API-Validierung von {len(to_validate)} Kandidaten ===")
-        for cid in to_validate:
-            name = validate_gym_id(token, cid)
-            if name:
-                print(f"  ✓ {cid} → {name}")
-            else:
-                print(f"  ✗ {cid}")
-
-    # ── 5. Zusammenfassung ───────────────────────────────────────────────────
-    print("\n=== ZUSAMMENFASSUNG ===")
-    print("Bestätigte Berliner Studios (Website):")
-    for s in CONFIRMED_SLUGS:
-        print(f"  https://johnreed.fitness/clubs/{s}")
-    print(f"\nBestätigte Firebase-IDs:")
-    print(f"  mL6O8ISwlk5tQt7mnwjo → JOHN REED Berlin Charlottenburg")
-    for gym_id, name in found_ids.items():
-        print(f"  {gym_id} → {name}")
+    # ── 4. Zusammenfassung ─────────────────────────────────────────────────
+    print("=== VOLLSTÄNDIGE STUDIO-LISTE ===")
+    print(f"{'Slug':<40} {'mlStudioID':<15} {'Firebase-ID'}")
+    print("-" * 85)
+    for slug, info in STUDIOS.items():
+        firebase = info['firebase'] or '❓'
+        ml_id    = info['mlId'] or '❓'
+        print(f"  {slug:<40} {ml_id:<15} {firebase}")
 
 if __name__ == "__main__":
     main()
