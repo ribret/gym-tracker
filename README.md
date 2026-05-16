@@ -1,6 +1,6 @@
 # JOHN REED Gym Utilization Tracker
 
-Zeichnet alle 15 Minuten die aktuelle Auslastung des JOHN REED Berlin Charlottenburg auf und speichert sie als CSV.
+Zeichnet alle 15 Minuten die aktuelle Auslastung des JOHN REED Berlin  auf und speichert sie als CSV.
 
 ## Setup (einmalig, ~5 Minuten)
 
