@@ -20,40 +20,53 @@ FIREBASE_REFRESH_TOKEN = os.environ["FIREBASE_REFRESH_TOKEN"]
 BRAND_ID = "johnreed"
 BASE_URL = "https://app-api.rsg.mamba-app.one-member.com"
 
-GYM_LAT = 52.52   # Berlin Mitte — einheitlich für alle 7 Studios
+# Fallback-Koordinate (Berlin Mitte), falls ein Studio keine lat/lon hat
+GYM_LAT = 52.52
 GYM_LON = 13.40
 
 DATA_DIR = Path(__file__).parent / "data"
 CSV_FILE = DATA_DIR / "gym_utilization.csv"
 
+# lat/lon = Stadtteil-Zentroide (Wetter je Studio statt eines gemeinsamen Berlin-Punkts).
+# Granularitaet bewusst Stadtteil-Ebene: Open-Meteo-Gitter ist ~2-11 km, gebaeudegenaue
+# Koordinaten waeren Scheinpraezision. Innerhalb Berlins unterscheidet sich v.a. Regen/
+# Gewitter, Temperatur kaum.
+# TODO(verify): womens_club-Standort nicht verifiziert (WebSearch-Limit), Mitte als Naeherung.
 GYMS = {
     "charlottenburg": {
         "id":   "mL6O8ISwlk5tQt7mnwjo",
         "name": "JOHN REED Berlin Charlottenburg",
+        "lat": 52.505, "lon": 13.304,
     },
     "kreuzberg": {
         "id":   "EbbAsfOAYjJK7frGwSQc",
         "name": "JOHN REED Berlin Kreuzberg",
+        "lat": 52.499, "lon": 13.403,
     },
     "prenzlauer_berg": {
         "id":   "QDsORQIS4OlDuDDs9BMD",
         "name": "JOHN REED Berlin Prenzlauer Berg",
+        "lat": 52.540, "lon": 13.424,
     },
     "boetzow": {
         "id":   "0B2lUvpIWFeuHJOIOXFi",
         "name": "JOHN REED Berlin-Bötzow",
+        "lat": 52.528, "lon": 13.434,   # Boetzowviertel, Prenzlauer Berg NO
     },
     "friedrichshain": {
         "id":   "rUN5RetcHHWRWEl978s7",
         "name": "JOHN REED Berlin-Friedrichshain",
+        "lat": 52.510, "lon": 13.454,
     },
     "womens_club": {
         "id":   "K2cAluM4mcXVbfSDPPdB",
         "name": "JOHN REED Women's Club",
+        "lat": 52.516, "lon": 13.388,   # Mitte (Naeherung, siehe TODO oben)
     },
     "gesundbrunnen": {
         "id":   "zChJkIuvStyOUunjqMW1",
         "name": "JOHN REED Berlin Gesundbrunnen",
+        "lat": 52.549, "lon": 13.389,
     },
 }
 
@@ -116,28 +129,45 @@ def fetch_utilization(id_token: str, gym_id: str) -> int:
     current_hour = str(datetime.now(BERLIN).hour)
     return int(utilization.get(current_hour, 0))
 
-def fetch_weather() -> dict:
-    """Open-Meteo (kostenlos, kein API-Key, DWD-Daten)"""
+_WEATHER_KEYS = ["Temperatur_C", "Niederschlag_mm", "Wettercode", "Bewoelkung_%", "Wind_kmh"]
+
+def _empty_weather() -> dict:
+    return {k: None for k in _WEATHER_KEYS}
+
+def fetch_weather_all(gyms: dict) -> dict:
+    """Open-Meteo (kostenlos, kein API-Key, DWD-Daten) — ein gebuendelter Multi-Standort-
+    Abruf fuer alle Studios (je eigene lat/lon). Gibt {key: weather_dict}. Fallback: None-Werte."""
+    keys = list(gyms.keys())
+    lats = ",".join(str(gyms[k].get("lat", GYM_LAT)) for k in keys)
+    lons = ",".join(str(gyms[k].get("lon", GYM_LON)) for k in keys)
     try:
         url = (
             "https://api.open-meteo.com/v1/forecast"
-            f"?latitude={GYM_LAT}&longitude={GYM_LON}"
+            f"?latitude={lats}&longitude={lons}"
             "&current=temperature_2m,precipitation,weather_code,cloud_cover,wind_speed_10m"
             "&timezone=Europe%2FBerlin"
         )
-        resp = requests.get(url, timeout=10)
+        resp = requests.get(url, timeout=15)
         resp.raise_for_status()
-        c = resp.json()["current"]
-        return {
-            "Temperatur_C":    c.get("temperature_2m"),
-            "Niederschlag_mm": c.get("precipitation"),
-            "Wettercode":      c.get("weather_code"),
-            "Bewoelkung_%":    c.get("cloud_cover"),
-            "Wind_kmh":        c.get("wind_speed_10m"),
-        }
+        data = resp.json()
+        if isinstance(data, dict):   # Einzelstandort -> in Liste normalisieren
+            data = [data]
+        out = {}
+        for k, loc in zip(keys, data):
+            c = (loc or {}).get("current", {})
+            out[k] = {
+                "Temperatur_C":    c.get("temperature_2m"),
+                "Niederschlag_mm": c.get("precipitation"),
+                "Wettercode":      c.get("weather_code"),
+                "Bewoelkung_%":    c.get("cloud_cover"),
+                "Wind_kmh":        c.get("wind_speed_10m"),
+            }
+        for k in keys:               # fehlende Standorte absichern
+            out.setdefault(k, _empty_weather())
+        return out
     except Exception as e:
         print(f"⚠️  Wetter-Abruf fehlgeschlagen: {e}")
-        return {k: None for k in ["Temperatur_C", "Niederschlag_mm", "Wettercode", "Bewoelkung_%", "Wind_kmh"]}
+        return {k: _empty_weather() for k in keys}
 
 _holiday_cache: dict = {}
 
@@ -276,19 +306,20 @@ def save(key: str, value: int, weather: dict, holidays: set, ferien: list):
 if __name__ == "__main__":
     migrate_csv_if_needed()
 
-    id_token = get_id_token()
-    weather  = fetch_weather()
-    now      = datetime.now(BERLIN)
-    holidays = fetch_holidays(now.year)
-    ferien   = fetch_school_holidays(now.year)
+    id_token    = get_id_token()
+    weather_all = fetch_weather_all(GYMS)
+    now         = datetime.now(BERLIN)
+    holidays    = fetch_holidays(now.year)
+    ferien      = fetch_school_holidays(now.year)
 
-    print(f"\n[{now.strftime('%Y-%m-%d %H:%M')}]  {weather['Temperatur_C']}°C, "
-          f"{weather['Niederschlag_mm']}mm, WMO {weather['Wettercode']}\n")
+    print(f"\n[{now.strftime('%Y-%m-%d %H:%M')}]  Wetter je Studio (Temp/Regen/WMO)\n")
 
     for key, gym in GYMS.items():
         try:
+            weather = weather_all.get(key, _empty_weather())
             value = fetch_utilization(id_token, gym["id"])
             save(key, value, weather, holidays, ferien)
-            print(f"  {gym['name']:<40}  {value:3d}%")
+            print(f"  {gym['name']:<40}  {value:3d}%   "
+                  f"{weather['Temperatur_C']}°C {weather['Niederschlag_mm']}mm")
         except Exception as e:
             print(f"  ⚠️  {gym['name']}: {e}")
