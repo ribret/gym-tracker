@@ -1,0 +1,66 @@
+name: Forecast Site (GitHub Pages)
+
+# Baut die Prognose-Seite und deployt sie auf GitHub Pages — ohne extra Hosting.
+# - "Knopfdruck": Actions-Tab -> "Forecast Site" -> "Run workflow"
+# - automatisch: 3x taeglich (krumme Minute, weil GitHub schedule-Trigger unter
+#   Last droppt; 3 Versuche/Tag machen mind. einen erfolgreichen Lauf sehr sicher)
+# Das Modell trainiert bei jedem Build frisch auf dem kompletten CSV -> die
+# Prognose verbessert sich automatisch mit jedem gesammelten Datentag.
+#
+# Einmalige Voraussetzung: Settings -> Pages -> Source = "GitHub Actions"
+# (configure-pages versucht das unten selbst zu aktivieren).
+
+on:
+  schedule:
+    - cron: "23 4,10,15 * * *"   # ~06:23 / 12:23 / 17:23 Berlin (Sommerzeit)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# nur ein Pages-Deploy gleichzeitig; laufende nicht abbrechen
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Checkout (main = aktuellster Datenstand)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Python Setup
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Dependencies
+        run: pip install "pandas>=2.0" "numpy>=1.24" "scikit-learn>=1.4"
+
+      - name: Seite bauen
+        env:
+          OMP_NUM_THREADS: "1"
+        run: python forecast/build_site.py --out-dir _site
+
+      - name: Pages konfigurieren
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Artefakt hochladen
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - name: Deploy
+        id: deploy
+        uses: actions/deploy-pages@v4
