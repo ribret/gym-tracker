@@ -1,14 +1,19 @@
 name: Forecast Site (GitHub Pages)
 
-# Baut die Prognose-Seite und deployt sie auf GitHub Pages — ohne extra Hosting.
+# Baut die Prognose-Seite und veroeffentlicht sie auf GitHub Pages — ohne extra Hosting.
 # - "Knopfdruck": Actions-Tab -> "Forecast Site" -> "Run workflow"
 # - automatisch: 3x taeglich (krumme Minute, weil GitHub schedule-Trigger unter
 #   Last droppt; 3 Versuche/Tag machen mind. einen erfolgreichen Lauf sehr sicher)
 # Das Modell trainiert bei jedem Build frisch auf dem kompletten CSV -> die
 # Prognose verbessert sich automatisch mit jedem gesammelten Datentag.
 #
-# Einmalige Voraussetzung: Settings -> Pages -> Source = "GitHub Actions"
-# (configure-pages versucht das unten selbst zu aktivieren).
+# VEROEFFENTLICHUNGS-MECHANISMUS: Force-Push der gebauten Seite auf den
+# gh-pages-Branch (= Pages-Quelle). Bewusst NICHT actions/deploy-pages: das
+# Anlegen/Umstellen der Pages-Site per API braucht Admin-Rechte, die der
+# GITHUB_TOKEN nicht hat ("Resource not accessible by integration"), und das
+# github-pages-Environment laesst nur gh-pages-Deploys zu. Der gh-pages-Push
+# triggert GitHubs eigenen "pages build and deployment"-Lauf (.nojekyll liegt
+# bei). Force-Push haelt gh-pages bei genau einem Commit -> kein Repo-Bloat.
 
 on:
   schedule:
@@ -16,11 +21,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
-# nur ein Pages-Deploy gleichzeitig; laufende nicht abbrechen
+# nur ein Pages-Publish gleichzeitig; laufende nicht abbrechen
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -28,9 +31,6 @@ concurrency:
 jobs:
   build-deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - name: Checkout (main = aktuellster Datenstand)
         uses: actions/checkout@v4
@@ -51,16 +51,14 @@ jobs:
           OMP_NUM_THREADS: "1"
         run: python forecast/build_site.py --out-dir _site
 
-      - name: Pages konfigurieren
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-
-      - name: Artefakt hochladen
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-      - name: Deploy
-        id: deploy
-        uses: actions/deploy-pages@v4
+      - name: Auf gh-pages veroeffentlichen
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          cd _site
+          git init -b gh-pages
+          git config user.name  "gym-tracker[bot]"
+          git config user.email "gym-tracker@users.noreply.github.com"
+          git add -A
+          git commit -m "pages: $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" gh-pages
