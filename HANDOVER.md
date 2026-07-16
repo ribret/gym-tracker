@@ -38,6 +38,7 @@ GitHub Actions (cron alle 30 min)
 - **Repo:** https://github.com/ribret/gym-tracker (public)
 - **Daten:** https://github.com/ribret/gym-tracker/tree/main/data
 - **Actions-Log:** https://github.com/ribret/gym-tracker/actions
+- **Prognose-Seite (GitHub Pages):** https://ribret.github.io/gym-tracker/ — gebaut von `forecast-site.yml` (3× täglich + manuell per „Run workflow")
 
 ---
 
@@ -47,6 +48,8 @@ GitHub Actions (cron alle 30 min)
 |-------|-------|
 | `gym_tracker.py` | Kernskript — Token-Refresh, Datenabruf für alle 7 Studios, CSV-Schreiben |
 | `.github/workflows/collect.yml` | Cron-Definition (alle 30 Min) + Commit-Logik |
+| `.github/workflows/forecast-site.yml` | baut die Prognose-Seite und deployt sie auf GitHub Pages |
+| `forecast/` | Prognosemodell + Backtest + Seiten-Generator (siehe `forecast/README.md`) |
 | `requirements.txt` | nur `requests` |
 | `pyproject.toml` | Projekt-Metadaten für lokale Entwicklung |
 | `data/gym_utilization.csv` | alle Studios in einer Datei, wächst pro Run um 7 Zeilen |

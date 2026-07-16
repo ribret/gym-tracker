@@ -51,6 +51,8 @@ nicht aus Theorie übernommen).
 | `model.py` | `ForecastModel` (Punkt + Bänder), `LookupBaseline` (Guardrail) |
 | `backtest.py` | ehrlicher rolling-origin-Backtest: MAE, Peak-MAE, Coverage, Gewinnrate |
 | `predict_day.py` | CLI: Tagesprognose je Studio mit Wetter-Abruf + Chart |
+| `build_site.py` | baut die statische Prognose-Seite (GitHub Pages) aus `site_template.html` |
+| `site_template.html` | selbst-enthaltenes Seiten-Template (SVG-Chart clientseitig, Daten als JSON) |
 
 ## Nutzung
 ```bash
@@ -64,6 +66,23 @@ OMP_NUM_THREADS=1 python3 forecast/backtest.py
 ```
 Deps: `forecast/requirements.txt` (pandas, numpy, scikit-learn; matplotlib nur für Chart).
 Das Modell trainiert bei jedem Lauf frisch auf dem gesamten CSV (Fit < 1 s), kein Artefakt nötig.
+
+## Prognose-Seite (GitHub Pages)
+
+`.github/workflows/forecast-site.yml` baut mit `build_site.py` eine statische Seite
+(Heute + Morgen, alle 7 Studios, 80%-Band, Ist-Messungen des Tages als Punkte) und
+deployt sie auf GitHub Pages — 3× täglich per Cron und auf Knopfdruck über
+Actions → „Forecast Site" → „Run workflow". Da das Modell je Build frisch auf allen
+Daten trainiert, verbessert sich die Seite automatisch mit jedem Datentag.
+
+```bash
+# lokal bauen und ansehen
+OMP_NUM_THREADS=1 python3 forecast/build_site.py --out-dir _site
+python3 -m http.server -d _site 8000
+```
+
+Einmalige Voraussetzung im Repo: Settings → Pages → Source = **GitHub Actions**
+(der Workflow versucht das per `configure-pages` selbst zu aktivieren).
 
 ## Ehrliche Grenzen
 - **Wetter generalisiert kaum** (1 Punkt × 51 Tage). "Hitze dämpft" ist in-sample real,

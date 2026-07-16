@@ -2,6 +2,11 @@
 
 Zeichnet alle 15 Minuten die aktuelle Auslastung des JOHN REED Berlin  auf und speichert sie als CSV.
 
+**📈 Live-Prognose:** https://ribret.github.io/gym-tracker/ — tagesaktuelle Auslastungsprognose
+(Heute + Morgen) für alle 7 Studios inkl. 80%-Band und bisherigen Ist-Messungen.
+Aktualisiert sich 3× täglich automatisch; auf Knopfdruck über
+Actions → **Forecast Site** → **Run workflow**. Details: [`forecast/README.md`](forecast/README.md)
+
 ## Setup (einmalig, ~5 Minuten)
 
 ### 1. GitHub Repo anlegen

@@ -13,6 +13,9 @@ venv/
 # macOS
 .DS_Store
 
+# Build-Output der Prognose-Seite (wird nur als Pages-Artefakt deployt)
+_site/
+
 # Lokale Secrets (Sicherheitsnetz — Skript nutzt keine .env-Datei)
 .env
 *.local
