@@ -81,8 +81,9 @@ OMP_NUM_THREADS=1 python3 forecast/build_site.py --out-dir _site
 python3 -m http.server -d _site 8000
 ```
 
-Einmalige Voraussetzung im Repo: Settings → Pages → Source = **GitHub Actions**
-(der Workflow versucht das per `configure-pages` selbst zu aktivieren).
+Veröffentlicht wird per Force-Push auf den `gh-pages`-Branch (Pages-Quelle; wurde durch
+das Anlegen des Branches automatisch aktiviert). Der API-Weg über `actions/deploy-pages`
+scheitert an den Token-Rechten — Begründung im Workflow-Kommentar.
 
 ## Ehrliche Grenzen
 - **Wetter generalisiert kaum** (1 Punkt × 51 Tage). "Hitze dämpft" ist in-sample real,
