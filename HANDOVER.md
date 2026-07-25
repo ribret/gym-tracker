@@ -22,8 +22,8 @@ GitHub Actions (cron alle 30 min)
   │   ID Token (1h gültig)
   │
   ├── GET Open-Meteo → Wetter (Temp, Regen, Bewölkung, Wind) — einmal pro Run
-  ├── GET feiertage-api.de → Berlin-Feiertage
-  ├── GET ferien-api.de → Berlin-Schulferien
+  ├── GET openholidaysapi.org/PublicHolidays → Berlin-Feiertage
+  ├── GET openholidaysapi.org/SchoolHolidays → Berlin-Schulferien
   │
   └── 7× GET /gyms/johnreed/gym/{ID}/utilization (alle Berliner Studios)
       → je eine neue Zeile in data/gym_utilization.csv
