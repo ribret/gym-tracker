@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JOHN REED Berlin — Auslastungsprognose</title>
+<title>JOHN REED Berlin: Utilization Forecast</title>
 <style>
   :root {
     --page:           #f9f9f7;
@@ -16,6 +16,9 @@
     --border:         rgba(11,11,11,0.10);
     --forecast:       #2a78d6;   /* Prognose (Linie + Band-Wash) */
     --actual:         #eb6834;   /* Ist-Messungen (Punkte) */
+    --conf-high:      #2e9e5b;   /* Aussagekraft: hoch */
+    --conf-mod:       #c0862a;   /* Aussagekraft: mittel */
+    --conf-low:       #c0552f;   /* Aussagekraft: gering (Fernprognose) */
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -29,6 +32,9 @@
       --border:         rgba(255,255,255,0.10);
       --forecast:       #3987e5;
       --actual:         #d95926;
+      --conf-high:      #45b072;
+      --conf-mod:       #d99a3c;
+      --conf-low:       #d9694a;
     }
   }
   * { box-sizing: border-box; margin: 0; }
@@ -42,11 +48,13 @@
   header p  { color: var(--text-secondary); font-size: 13px; margin-top: 3px; }
 
   .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 14px; align-items: center; }
-  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; background: var(--surface-1); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow-x: auto; max-width: 100%; background: var(--surface-1); }
   .seg button {
     border: 0; background: transparent; color: var(--text-secondary);
     font: inherit; font-size: 13.5px; padding: 7px 14px; cursor: pointer;
+    white-space: nowrap; flex: 0 0 auto;
   }
+  .seg button + button { border-left: 1px solid var(--border); }
   .seg button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); font-weight: 600; }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chips button {
@@ -64,6 +72,11 @@
   }
   .card h2 { font-size: 15.5px; font-weight: 650; }
   .card .ctx { color: var(--text-secondary); font-size: 13px; margin-top: 2px; }
+  .conf { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); }
+  .conf .meter { display: inline-flex; gap: 3px; }
+  .conf .seg3 { width: 16px; height: 5px; border-radius: 2px; background: var(--grid); }
+  .conf .seg3.on { background: var(--cc); }
+  .conf .txt { font-weight: 600; color: var(--cc); }
 
   .tiles { display: flex; flex-wrap: wrap; gap: 26px; margin: 14px 0 6px; }
   .tile .lbl { font-size: 12px; color: var(--text-muted); }
@@ -105,41 +118,42 @@
 <body>
 <div class="wrap">
   <header>
-    <h1>JOHN REED Berlin — Auslastungsprognose</h1>
+    <h1>JOHN REED Berlin: Utilization Forecast</h1>
     <p id="meta"></p>
   </header>
 
   <div class="controls">
-    <div class="seg" id="daySeg" role="group" aria-label="Tag"></div>
+    <div class="seg" id="daySeg" role="group" aria-label="Day"></div>
     <div class="chips" id="chips" role="group" aria-label="Studio"></div>
   </div>
 
   <div class="card">
     <h2 id="cardTitle"></h2>
     <div class="ctx" id="cardCtx"></div>
+    <div class="conf" id="cardConf"></div>
     <div class="tiles">
-      <div class="tile"><div class="lbl">Erwarteter Peak</div><div class="val" id="tPeak"></div><div class="sub" id="tPeakSub"></div></div>
-      <div class="tile"><div class="lbl">Tagesmittel (06–23 Uhr)</div><div class="val" id="tMean"></div><div class="sub">Prognose</div></div>
-      <div class="tile"><div class="lbl">Letzte Messung</div><div class="val" id="tLast"></div><div class="sub" id="tLastSub"></div></div>
+      <div class="tile"><div class="lbl">Expected peak</div><div class="val" id="tPeak"></div><div class="sub" id="tPeakSub"></div></div>
+      <div class="tile"><div class="lbl">Daily mean (06:00–23:00)</div><div class="val" id="tMean"></div><div class="sub">Forecast</div></div>
+      <div class="tile"><div class="lbl">Last measurement</div><div class="val" id="tLast"></div><div class="sub" id="tLastSub"></div></div>
     </div>
     <div class="chartbox">
-      <svg id="chart" viewBox="0 0 720 340" role="img" aria-label="Prognosekurve der Auslastung im Tagesverlauf"></svg>
+      <svg id="chart" viewBox="0 0 720 340" role="img" aria-label="Forecast curve of utilization over the day"></svg>
       <div class="tooltip" id="tooltip"></div>
     </div>
     <div class="legend" id="legend"></div>
     <details>
-      <summary>Tabellenansicht (alle Werte)</summary>
+      <summary>Table view (all values)</summary>
       <div style="overflow-x:auto"><table id="tbl"></table></div>
     </details>
   </div>
 
   <footer>
-    Modell: Gradient Boosting (full pooling über alle 7 Studios), trainiert bei jedem Seiten-Build
-    frisch auf allen bis dahin gesammelten Daten — die Prognose verbessert sich damit automatisch
-    mit jedem Tag. Band = empirisch kalibriertes 80%-Intervall (gemessene Coverage ≈ 79 %).
-    Wetter: Open-Meteo. Details &amp; Backtest:
+    Model: gradient boosting (full pooling across all 7 studios), retrained from scratch on every
+    page build using all data collected so far, so the forecast improves automatically each day.
+    Band = empirically calibrated 80% interval (measured coverage ≈ 79%).
+    Weather: Open-Meteo. Details &amp; backtest:
     <a href="https://github.com/ribret/gym-tracker/tree/main/forecast">forecast/README</a> ·
-    Rohdaten: <a href="https://github.com/ribret/gym-tracker/tree/main/data">data/</a>
+    Raw data: <a href="https://github.com/ribret/gym-tracker/tree/main/data">data/</a>
   </footer>
 </div>
 
@@ -150,14 +164,23 @@ const DATA = /*__DATA__*/null;
 const SVGNS = "http://www.w3.org/2000/svg";
 const $ = id => document.getElementById(id);
 const state = {
-  day: 0,
+  day: DATA.today_index ?? 0,
   studio: localStorage.getItem("jr-studio") || "charlottenburg",
 };
 if (!DATA.studios.includes(state.studio)) state.studio = DATA.studios[0];
 
-const WD_SHORT = { Montag:"Mo", Dienstag:"Di", Mittwoch:"Mi", Donnerstag:"Do",
-                   Freitag:"Fr", Samstag:"Sa", Sonntag:"So" };
-const fmtDate = iso => `${iso.slice(8,10)}.${iso.slice(5,7)}.`;
+const WD_SHORT = { Monday:"Mon", Tuesday:"Tue", Wednesday:"Wed", Thursday:"Thu",
+                   Friday:"Fri", Saturday:"Sat", Sunday:"Sun" };
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtDate = iso => `${MON[+iso.slice(5,7) - 1]} ${iso.slice(8,10)}`;
+
+// Graduated forecast reliability by lead time. alpha dims the forecast curve.
+function confidence(horizon) {
+  if (horizon < 0)   return { on: 0, alpha: 1,    color: "--text-muted", label: "Measured day" };
+  if (horizon <= 1)  return { on: 3, alpha: 1,    color: "--conf-high",  label: "High forecast reliability" };
+  if (horizon <= 3)  return { on: 2, alpha: 0.72, color: "--conf-mod",   label: "Moderate reliability" };
+  return               { on: 1, alpha: 0.5,  color: "--conf-low",   label: "Low reliability · long-range" };
+}
 const hhmm = m => `${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
 
 function el(tag, attrs, parent) {
@@ -219,36 +242,47 @@ function render() {
   const label = DATA.labels[state.studio] || state.studio;
 
   $("meta").textContent =
-    `Stand: ${DATA.generated} Uhr · Modell trainiert auf ${DATA.train_days} Tagen ` +
-    `(${DATA.train_rows.toLocaleString("de-DE")} Messungen, letzte: ${DATA.last_data} Uhr)`;
+    `As of ${DATA.generated} · model trained on ${DATA.train_days} days ` +
+    `(${DATA.train_rows.toLocaleString("en-US")} measurements, latest: ${DATA.last_data})`;
 
-  $("cardTitle").textContent = `${label} — ${day.weekday}, ${fmtDate(day.date)}`;
+  $("cardTitle").textContent = `${label} · ${day.weekday}, ${fmtDate(day.date)}`;
   const ctx = [];
-  if (day.tmax != null) ctx.push(`max. ${day.tmax.toLocaleString("de-DE")} °C`);
-  if (day.rain_mm != null) ctx.push(day.rain_mm > 0.1 ? `${day.rain_mm.toLocaleString("de-DE")} mm Regen` : "kein Regen");
-  ctx.push(day.schulferien ? "Schulferien" : "keine Schulferien");
+  if (day.tmax != null) ctx.push(`max ${day.tmax.toLocaleString("en-US")} °C`);
+  if (day.rain_mm != null) ctx.push(day.rain_mm > 0.1 ? `${day.rain_mm.toLocaleString("en-US")} mm rain` : "no rain");
+  ctx.push(day.schulferien ? "school holidays" : "no school holidays");
   $("cardCtx").textContent = ctx.join(" · ");
+
+  // Graduated reliability meter (further out = less certain)
+  const cf = confidence(day.horizon);
+  const conf = $("cardConf");
+  conf.textContent = "";
+  conf.style.setProperty("--cc", `var(${cf.color})`);
+  if (cf.on > 0) {
+    const meter = div("meter", conf);
+    for (let k = 0; k < 3; k++) div("seg3" + (k < cf.on ? " on" : ""), meter);
+  }
+  div("txt", conf, cf.label);
 
   // Tiles
   const peakI = fc.pt.indexOf(Math.max(...fc.pt));
   $("tPeak").textContent = `${fc.pt[peakI]} %`;
-  $("tPeakSub").textContent = `um ${String(hrs[peakI]).padStart(2,"0")}:00 Uhr · Band ${fc.lo[peakI]}–${fc.hi[peakI]} %`;
+  $("tPeakSub").textContent = `at ${String(hrs[peakI]).padStart(2,"0")}:00 · band ${fc.lo[peakI]}–${fc.hi[peakI]} %`;
   $("tMean").textContent = `${Math.round(fc.pt.reduce((a,b)=>a+b,0) / fc.pt.length)} %`;
   if (act.length) {
     const [m, v] = act[act.length - 1];
     $("tLast").textContent = `${v} %`;
-    $("tLastSub").textContent = `heute um ${hhmm(m)} Uhr`;
+    $("tLastSub").textContent = `${day.label.toLowerCase()} at ${hhmm(m)}`;
   } else {
     $("tLast").textContent = "—";
-    $("tLastSub").textContent = state.day === 0 ? "noch keine Messung" : "liegt in der Zukunft";
+    $("tLastSub").textContent = state.day === DATA.today_index ? "no measurement yet" : "in the future";
   }
 
-  drawChart(fc, act, hrs, peakI);
+  drawChart(fc, act, hrs, peakI, cf.alpha);
   drawLegend(act.length > 0, day.label);
   drawTable(fc, act, hrs);
 }
 
-function drawChart(fc, act, hrs, peakI) {
+function drawChart(fc, act, hrs, peakI, alpha = 1) {
   const svg = $("chart");
   svg.textContent = "";
   const css = getComputedStyle(document.documentElement);
@@ -267,14 +301,16 @@ function drawChart(fc, act, hrs, peakI) {
                  fill: col("--text-muted") }, svg).textContent = String(h).padStart(2,"0");
   }
   el("text", { x: W - M.r, y: H - M.b + 17, "text-anchor": "end", "font-size": 11,
-               fill: col("--text-muted") }, svg).textContent = "Uhr";
+               fill: col("--text-muted") }, svg).textContent = "h";
 
   // 80%-Band (Wash) + Prognoselinie
   const up = hrs.map((h,i) => `${i?"L":"M"}${xOf(h)},${yOf(fc.hi[i])}`).join("");
   const dn = [...hrs.keys()].reverse().map(i => `L${xOf(hrs[i])},${yOf(fc.lo[i])}`).join("");
-  el("path", { d: up + dn + "Z", fill: col("--forecast"), opacity: 0.12 }, svg);
+  el("path", { d: up + dn + "Z", fill: col("--forecast"),
+               opacity: (0.12 * alpha).toFixed(3) }, svg);
   el("path", { d: hrs.map((h,i) => `${i?"L":"M"}${xOf(h)},${yOf(fc.pt[i])}`).join(""),
                fill: "none", stroke: col("--forecast"), "stroke-width": 2,
+               "stroke-opacity": alpha,
                "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
 
   // Peak: einziges Direktlabel + Marker
@@ -323,14 +359,14 @@ function drawChart(fc, act, hrs, peakI) {
 function tooltip(i, fc, act, hrs) {
   const tt = $("tooltip"), h = hrs[i];
   tt.textContent = "";
-  div("tt-h", tt, `${String(h).padStart(2,"0")}:00 Uhr`);
+  div("tt-h", tt, `${String(h).padStart(2,"0")}:00`);
   const css = getComputedStyle(document.documentElement);
 
   const r1 = div("row", tt);
   const k1 = div("key", r1); k1.style.borderTopColor = css.getPropertyValue("--forecast");
   div("v", r1, `${fc.pt[i]} %`);
-  div("n", r1, "Prognose");
-  div("b", div("row", tt), `80%-Band: ${fc.lo[i]}–${fc.hi[i]} %`);
+  div("n", r1, "Forecast");
+  div("b", div("row", tt), `80% band: ${fc.lo[i]}–${fc.hi[i]} %`);
 
   const near = act.filter(([m]) => Math.abs(m - h * 60) <= 30)
                   .sort((a,b) => Math.abs(a[0]-h*60) - Math.abs(b[0]-h*60))[0];
@@ -338,7 +374,7 @@ function tooltip(i, fc, act, hrs) {
     const r2 = div("row", tt);
     const k2 = div("key", r2); k2.style.borderTopColor = css.getPropertyValue("--actual");
     div("v", r2, `${near[1]} %`);
-    div("n", r2, `Ist ${hhmm(near[0])}`);
+    div("n", r2, `actual ${hhmm(near[0])}`);
   }
 
   tt.style.display = "block";
@@ -352,16 +388,16 @@ function drawLegend(hasActuals, dayLabel) {
   const lg = $("legend");
   lg.textContent = "";
   const mk = (cls, txt) => { const it = div("item", lg); div(cls, it); div("", it, txt); };
-  mk("line", "Prognose");
-  mk("band", "80%-Band");
-  if (hasActuals) mk("dot", `Messungen ${dayLabel === "Heute" ? "heute" : dayLabel.toLowerCase()}`);
+  mk("line", "Forecast");
+  mk("band", "80% band");
+  if (hasActuals) mk("dot", `Measurements ${dayLabel === "Today" ? "today" : dayLabel.toLowerCase()}`);
 }
 
 function drawTable(fc, act, hrs) {
   const t = $("tbl");
   t.textContent = "";
   const tr = document.createElement("tr");
-  for (const h of ["Uhrzeit", "Prognose", "80%-Band", "Ist (Ø der Stunde)"]) {
+  for (const h of ["Time", "Forecast", "80% band", "Actual (hourly avg)"]) {
     const th = document.createElement("th"); th.textContent = h; tr.appendChild(th);
   }
   t.appendChild(tr);

@@ -19,11 +19,26 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from features import STUDIOS, WEEKDAYS_DE, build_predict_frame, load_raw
+from features import STUDIOS, build_predict_frame, load_raw
 from model import ForecastModel, load_training_frame
 
 BERLIN = ZoneInfo("Europe/Berlin")
 BERLIN_LAT, BERLIN_LON = 52.52, 13.40
+
+WEEKDAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday",
+               "Friday", "Saturday", "Sunday"]
+
+# Ansichtsfenster: 2 Tage Vergangenheit (Ist + Prognose) + Heute + 6 Prognosetage.
+PAST_DAYS, FUTURE_DAYS = 2, 6
+
+
+def day_label(offset: int) -> str:
+    """Relatives Tages-Label (Englisch) fuer den Segment-Button."""
+    if offset <= -2: return f"{-offset} days ago"
+    if offset == -1: return "Yesterday"
+    if offset == 0:  return "Today"
+    if offset == 1:  return "Tomorrow"
+    return f"In {offset} days"
 
 STUDIO_LABELS = {
     "boetzow": "Bötzow",
@@ -96,7 +111,9 @@ def main():
 
     now = dt.datetime.now(BERLIN)
     today = now.date()
-    dates = [today, today + dt.timedelta(days=1)]
+    dates = [today + dt.timedelta(days=off)
+             for off in range(-PAST_DAYS, FUTURE_DAYS + 1)]
+    today_index = dates.index(today)
 
     hours = list(range(args.from_hour, args.to_hour + 1))
     raw = load_raw(args.csv)
@@ -140,8 +157,9 @@ def main():
         day_prec = prec[~np.isnan(prec)]
         days.append({
             "date": ds,
-            "label": "Heute" if di == 0 else "Morgen",
-            "weekday": WEEKDAYS_DE[d.weekday()],
+            "label": day_label((d - today).days),
+            "horizon": (d - today).days,   # <0 Vergangenheit, 0 heute, >0 Prognosevorlauf
+            "weekday": WEEKDAYS_EN[d.weekday()],
             "schulferien": sf,
             "tmax": round(float(day_temp.max()), 1) if len(day_temp) else None,
             "rain_mm": round(float(day_prec.sum()), 1) if len(day_prec) else None,
@@ -150,10 +168,11 @@ def main():
         })
 
     payload = {
-        "generated": now.strftime("%d.%m.%Y, %H:%M"),
+        "generated": now.strftime("%d %b %Y, %H:%M"),
         "train_days": int(df["date"].nunique()),
         "train_rows": int(len(df)),
-        "last_data": last_dt.strftime("%d.%m.%Y, %H:%M"),
+        "last_data": last_dt.strftime("%d %b %Y, %H:%M"),
+        "today_index": today_index,
         "hours": hours,
         "studios": STUDIOS,
         "labels": STUDIO_LABELS,
