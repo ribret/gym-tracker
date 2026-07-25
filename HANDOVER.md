@@ -38,7 +38,7 @@ GitHub Actions (cron alle 30 min)
 - **Repo:** https://github.com/ribret/gym-tracker (public)
 - **Daten:** https://github.com/ribret/gym-tracker/tree/main/data
 - **Actions-Log:** https://github.com/ribret/gym-tracker/actions
-- **Prognose-Seite (GitHub Pages):** https://ribret.github.io/gym-tracker/ — gebaut von `forecast-site.yml` (3× täglich + manuell per „Run workflow")
+- **Prognose-Seite (GitHub Pages):** https://ribret.github.io/gym-tracker/ , gebaut von `forecast-site.yml` (3× täglich + manuell per „Run workflow"). UI auf Englisch. Ansichtsfenster: 2 Tage Vergangenheit (Prognose + Ist-Werte übereinander) + Heute + 6 Prognosetage, mit abgestufter Aussagekraft-Kennzeichnung (Meter + gedimmte Kurve, je weiter voraus desto unsicherer). Fenster steuerbar über `PAST_DAYS`/`FUTURE_DAYS` in `build_site.py`.
 
 ---
 
