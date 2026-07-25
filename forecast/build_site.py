@@ -54,16 +54,23 @@ def fetch_weather(start: str, end: str) -> dict:
         return {}
 
 
+OPENHOLIDAYS_BASE = "https://openholidaysapi.org"
+
+
 def fetch_ferien_periods(years) -> list | None:
-    """Berliner Schulferien als (start, end)-Liste. None = API nicht erreichbar."""
+    """Berliner Schulferien als (start, end)-Liste via openHolidays API.
+    None = API nicht erreichbar (Caller faellt dann auf den letzten CSV-Wert zurueck).
+    Loest ferien-api.de ab, die ab 2026 ein leeres Array lieferte."""
     periods, ok = [], False
     for y in sorted(set(years)):
+        url = (f"{OPENHOLIDAYS_BASE}/SchoolHolidays?countryIsoCode=DE"
+               f"&subdivisionCode=DE-BE&validFrom={y}-01-01&validTo={y}-12-31")
         try:
-            with urllib.request.urlopen(f"https://ferien-api.de/api/v1/holidays/BE/{y}",
-                                        timeout=10) as r:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as r:
                 for h in json.load(r):
-                    s = dt.datetime.fromisoformat(h["start"].replace("Z", "+00:00")).date()
-                    e = dt.datetime.fromisoformat(h["end"].replace("Z", "+00:00")).date()
+                    s = dt.date.fromisoformat(h["startDate"])
+                    e = dt.date.fromisoformat(h["endDate"])
                     periods.append((s, e))
             ok = True
         except Exception as e:

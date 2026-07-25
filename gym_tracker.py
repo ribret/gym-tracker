@@ -6,7 +6,7 @@ JOHN REED Berlin — Auslastungs-Tracker für alle 7 Studios mit Wetter & Kalend
 import os
 import csv
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
@@ -19,6 +19,12 @@ FIREBASE_REFRESH_TOKEN = os.environ["FIREBASE_REFRESH_TOKEN"]
 
 BRAND_ID = "johnreed"
 BASE_URL = "https://app-api.rsg.mamba-app.one-member.com"
+
+# Feiertage + Schulferien: openHolidays API (offiziell, EU-gefoerdert, gepflegt).
+# Loest ferien-api.de/feiertage-api.de ab — ferien-api.de lieferte ab 2026 ein leeres
+# Array (HTTP 200, keine Daten), wodurch Ist_Schulferien_BE dauerhaft 0 blieb.
+OPENHOLIDAYS_BASE = "https://openholidaysapi.org"
+BERLIN_SUBDIVISION = "DE-BE"
 
 # Fallback-Koordinate (Berlin Mitte), falls ein Studio keine lat/lon hat
 GYM_LAT = 52.52
@@ -169,17 +175,38 @@ def fetch_weather_all(gyms: dict) -> dict:
         print(f"⚠️  Wetter-Abruf fehlgeschlagen: {e}")
         return {k: _empty_weather() for k in keys}
 
+def _openholidays(kind: str, year: int) -> list:
+    """Rohabruf openHolidays (kind = 'PublicHolidays' | 'SchoolHolidays') fuer Berlin.
+    Wirft bei Netz-/HTTP-Fehler (Caller entscheidet ueber Fallback)."""
+    resp = requests.get(
+        f"{OPENHOLIDAYS_BASE}/{kind}",
+        params={
+            "countryIsoCode":  "DE",
+            "subdivisionCode": BERLIN_SUBDIVISION,
+            "validFrom":       f"{year}-01-01",
+            "validTo":         f"{year}-12-31",
+        },
+        headers={"Accept": "application/json"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
 _holiday_cache: dict = {}
 
 def fetch_holidays(year: int) -> set:
-    """Gesetzliche Feiertage Berlin (Bund + Land)"""
+    """Gesetzliche Feiertage Berlin (Bund + Land) via openHolidays API."""
     if year in _holiday_cache:
         return _holiday_cache[year]
     try:
-        resp = requests.get(f"https://feiertage-api.de/api/?jahr={year}&nur_land=BE", timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        dates = {datetime.strptime(v["datum"], "%Y-%m-%d").date() for v in data.values()}
+        dates = set()
+        for h in _openholidays("PublicHolidays", year):
+            start = datetime.strptime(h["startDate"], "%Y-%m-%d").date()
+            end   = datetime.strptime(h["endDate"],   "%Y-%m-%d").date()
+            d = start
+            while d <= end:            # Feiertage sind i.d.R. eintaegig; Spanne trotzdem sauber expandieren
+                dates.add(d)
+                d += timedelta(days=1)
         _holiday_cache[year] = dates
         return dates
     except Exception as e:
@@ -189,16 +216,14 @@ def fetch_holidays(year: int) -> set:
 _ferien_cache: dict = {}
 
 def fetch_school_holidays(year: int) -> list:
-    """Berliner Schulferien"""
+    """Berliner Schulferien via openHolidays API."""
     if year in _ferien_cache:
         return _ferien_cache[year]
     try:
-        resp = requests.get(f"https://ferien-api.de/api/v1/holidays/BE/{year}", timeout=10)
-        resp.raise_for_status()
         periods = []
-        for h in resp.json():
-            start = datetime.fromisoformat(h["start"].replace("Z", "+00:00")).date()
-            end   = datetime.fromisoformat(h["end"].replace("Z", "+00:00")).date()
+        for h in _openholidays("SchoolHolidays", year):
+            start = datetime.strptime(h["startDate"], "%Y-%m-%d").date()
+            end   = datetime.strptime(h["endDate"],   "%Y-%m-%d").date()
             periods.append((start, end))
         _ferien_cache[year] = periods
         return periods
