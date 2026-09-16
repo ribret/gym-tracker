@@ -151,6 +151,8 @@
     Model: gradient boosting (full pooling across all 7 studios), retrained from scratch on every
     page build using all data collected so far, so the forecast improves automatically each day.
     Band = empirically calibrated 80% interval (measured coverage ≈ 79%).
+    Read the shape of the day rather than the exact peak height: mean error is about
+    7.5 points in the busy window (10:00 to 21:00) and near zero overnight.
     Weather: Open-Meteo. Details &amp; backtest:
     <a href="https://github.com/ribret/gym-tracker/tree/main/forecast">forecast/README</a> ·
     Raw data: <a href="https://github.com/ribret/gym-tracker/tree/main/data">data/</a>
