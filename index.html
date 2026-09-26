@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JOHN REED Berlin: Utilization Forecast</title>
+<style>
+  :root {
+    --page:           #f9f9f7;
+    --surface-1:      #fcfcfb;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --grid:           #e1e0d9;
+    --axis:           #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --forecast:       #2a78d6;   /* Prognose (Linie + Band-Wash) */
+    --actual:         #eb6834;   /* Ist-Messungen (Punkte) */
+    --conf-high:      #2e9e5b;   /* Aussagekraft: hoch */
+    --conf-mod:       #c0862a;   /* Aussagekraft: mittel */
+    --conf-low:       #c0552f;   /* Aussagekraft: gering (Fernprognose) */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --page:           #0d0d0d;
+      --surface-1:      #1a1a19;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --grid:           #2c2c2a;
+      --axis:           #383835;
+      --border:         rgba(255,255,255,0.10);
+      --forecast:       #3987e5;
+      --actual:         #d95926;
+      --conf-high:      #45b072;
+      --conf-mod:       #d99a3c;
+      --conf-low:       #d9694a;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--page); color: var(--text-primary);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 20px 14px 40px;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  header h1 { font-size: 21px; font-weight: 650; letter-spacing: -0.01em; }
+  header p  { color: var(--text-secondary); font-size: 13px; margin-top: 3px; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 14px; align-items: center; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow-x: auto; max-width: 100%; background: var(--surface-1); }
+  .seg button {
+    border: 0; background: transparent; color: var(--text-secondary);
+    font: inherit; font-size: 13.5px; padding: 7px 14px; cursor: pointer;
+    white-space: nowrap; flex: 0 0 auto;
+  }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); font-weight: 600; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chips button {
+    border: 1px solid var(--border); border-radius: 999px; background: var(--surface-1);
+    color: var(--text-secondary); font: inherit; font-size: 13px; padding: 5px 12px; cursor: pointer;
+  }
+  .chips button:hover { color: var(--text-primary); }
+  .chips button[aria-pressed="true"] {
+    background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); font-weight: 600;
+  }
+
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 14px; padding: 18px 18px 12px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15.5px; font-weight: 650; }
+  .card .ctx { color: var(--text-secondary); font-size: 13px; margin-top: 2px; }
+  .conf { display: inline-flex; align-items: center; gap: 7px; margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); }
+  .conf .meter { display: inline-flex; gap: 3px; }
+  .conf .seg3 { width: 16px; height: 5px; border-radius: 2px; background: var(--grid); }
+  .conf .seg3.on { background: var(--cc); }
+  .conf .txt { font-weight: 600; color: var(--cc); }
+
+  .tiles { display: flex; flex-wrap: wrap; gap: 26px; margin: 14px 0 6px; }
+  .tile .lbl { font-size: 12px; color: var(--text-muted); }
+  .tile .val { font-size: 26px; font-weight: 600; margin-top: 1px; }
+  .tile .sub { font-size: 12px; color: var(--text-secondary); }
+
+  .chartbox { position: relative; overflow-x: auto; }
+  svg { display: block; width: 100%; min-width: 560px; height: auto; }
+  .tooltip {
+    position: absolute; pointer-events: none; display: none; z-index: 3;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 9px;
+    padding: 8px 11px; font-size: 12.5px; box-shadow: 0 3px 14px rgba(0,0,0,0.13);
+    min-width: 120px;
+  }
+  .tooltip .tt-h { color: var(--text-muted); font-size: 11.5px; margin-bottom: 4px; }
+  .tooltip .row { display: flex; align-items: baseline; gap: 7px; margin-top: 2px; }
+  .tooltip .key { width: 12px; height: 0; border-top: 3px solid; border-radius: 2px; align-self: center; }
+  .tooltip .v { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .tooltip .n { color: var(--text-secondary); }
+  .tooltip .b { color: var(--text-muted); font-size: 11.5px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 6px 2px 2px; font-size: 12.5px; color: var(--text-secondary); }
+  .legend .item { display: inline-flex; align-items: center; gap: 6px; }
+  .legend .line { width: 16px; height: 0; border-top: 2.5px solid var(--forecast); border-radius: 2px; }
+  .legend .band { width: 16px; height: 10px; background: var(--forecast); opacity: 0.16; border-radius: 2px; }
+  .legend .dot  { width: 9px; height: 9px; border-radius: 50%; background: var(--actual); box-shadow: 0 0 0 2px var(--surface-1); }
+
+  details { margin: 8px 0 0; }
+  summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); padding: 6px 2px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; margin-top: 6px; }
+  th, td { text-align: right; padding: 5px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-muted); font-weight: 500; font-size: 12px; }
+
+  footer { color: var(--text-muted); font-size: 12.5px; line-height: 1.6; margin-top: 14px; }
+  footer a { color: var(--text-secondary); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>JOHN REED Berlin: Utilization Forecast</h1>
+    <p id="meta"></p>
+  </header>
+
+  <div class="controls">
+    <div class="seg" id="daySeg" role="group" aria-label="Day"></div>
+    <div class="chips" id="chips" role="group" aria-label="Studio"></div>
+  </div>
+
+  <div class="card">
+    <h2 id="cardTitle"></h2>
+    <div class="ctx" id="cardCtx"></div>
+    <div class="conf" id="cardConf"></div>
+    <div class="tiles">
+      <div class="tile"><div class="lbl">Expected peak</div><div class="val" id="tPeak"></div><div class="sub" id="tPeakSub"></div></div>
+      <div class="tile"><div class="lbl">Daily mean (06:00–23:00)</div><div class="val" id="tMean"></div><div class="sub">Forecast</div></div>
+      <div class="tile"><div class="lbl">Last measurement</div><div class="val" id="tLast"></div><div class="sub" id="tLastSub"></div></div>
+    </div>
+    <div class="chartbox">
+      <svg id="chart" viewBox="0 0 720 340" role="img" aria-label="Forecast curve of utilization over the day"></svg>
+      <div class="tooltip" id="tooltip"></div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <details>
+      <summary>Table view (all values)</summary>
+      <div style="overflow-x:auto"><table id="tbl"></table></div>
+    </details>
+  </div>
+
+  <footer>
+    Model: gradient boosting (full pooling across all 7 studios), retrained from scratch on every
+    page build using all data collected so far, so the forecast improves automatically each day.
+    Band = empirically calibrated 80% interval (measured coverage ≈ 79%).
+    Read the shape of the day rather than the exact peak height: mean error is about
+    7.5 points in the busy window (10:00 to 21:00) and near zero overnight.
+    Weather: Open-Meteo. Details &amp; backtest:
+    <a href="https://github.com/ribret/gym-tracker/tree/main/forecast">forecast/README</a> ·
+    Raw data: <a href="https://github.com/ribret/gym-tracker/tree/main/data">data/</a>
+  </footer>
+</div>
+
+<script>
+"use strict";
+const DATA = {"generated":"26 Sep 2026, 20:38","train_days":134,"train_rows":25111,"last_data":"26 Sep 2026, 20:22","today_index":2,"hours":[6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23],"studios":["boetzow","charlottenburg","friedrichshain","gesundbrunnen","kreuzberg","prenzlauer_berg","womens_club"],"labels":{"boetzow":"Bötzow","charlottenburg":"Charlottenburg","friedrichshain":"Friedrichshain","gesundbrunnen":"Gesundbrunnen","kreuzberg":"Kreuzberg","prenzlauer_berg":"Prenzlauer Berg","womens_club":"Women's Club"},"days":[{"date":"2026-09-24","label":"2 days ago","horizon":-2,"weekday":"Thursday","schulferien":0,"tmax":15.4,"rain_mm":0.9,"forecast":{"boetzow":{"pt":[1,14,27,33,35,39,41,36,39,41,43,47,54,46,44,57,23,22],"lo":[0,4,17,23,24,28,21,16,20,21,23,26,33,24,23,36,2,20],"hi":[8,21,34,40,42,46,47,42,46,47,49,57,64,56,55,67,34,23]},"charlottenburg":{"pt":[0,11,20,22,25,29,32,30,32,34,36,32,35,28,33,43,29,21],"lo":[0,1,9,11,14,19,12,11,12,14,16,11,14,7,12,22,8,19],"hi":[7,18,26,29,32,36,38,36,38,40,42,42,45,38,44,53,39,22]},"friedrichshain":{"pt":[2,19,30,37,39,42,44,39,44,45,48,55,71,54,49,59,20,11],"lo":[0,8,20,26,28,32,24,19,24,25,28,34,50,32,28,38,0,9],"hi":[9,26,37,44,45,49,50,45,50,51,54,65,82,64,59,69,30,11]},"gesundbrunnen":{"pt":[0,11,23,28,32,37,39,38,40,40,42,45,55,53,48,58,30,27],"lo":[0,0,13,17,21,27,20,18,20,20,22,24,33,32,27,37,9,25],"hi":[7,17,30,34,39,44,46,44,46,46,48,55,65,63,59,68,40,27]},"kreuzberg":{"pt":[1,13,27,33,37,42,46,40,44,45,45,48,54,55,50,57,26,24],"lo":[0,2,16,22,27,32,26,20,24,25,25,26,32,34,29,36,4,22],"hi":[8,20,34,40,44,49,52,46,50,51,51,58,64,65,61,68,36,25]},"prenzlauer_berg":{"pt":[4,14,26,31,34,36,37,34,37,37,39,35,39,38,27,42,25,18],"lo":[0,3,16,20,24,25,17,14,17,17,19,14,18,17,5,20,4,16],"hi":[11,21,33,38,41,43,43,40,43,43,45,45,50,48,37,52,35,18]},"womens_club":{"pt":[0,6,16,18,22,29,35,36,39,39,42,48,61,63,54,75,62,45],"lo":[0,0,5,8,12,19,15,16,19,19,22,27,40,41,33,53,40,42],"hi":[7,13,23,25,29,36,41,42,45,45,48,59,71,73,64,85,72,45]}},"actuals":{"boetzow":[[453,23],[461,27],[469,29],[754,34],[762,36],[770,33],[1051,56],[1060,61],[1068,60],[1292,48],[1300,46],[1308,43]],"charlottenburg":[[453,18],[461,18],[469,22],[754,23],[762,22],[770,21],[1051,42],[1060,45],[1068,45],[1292,43],[1300,42],[1308,42]],"friedrichshain":[[453,26],[461,26],[469,27],[754,35],[762,38],[770,43],[1051,62],[1060,61],[1068,69],[1292,44],[1300,40],[1308,38]],"gesundbrunnen":[[453,13],[461,14],[469,15],[754,24],[762,25],[770,26],[1051,34],[1060,36],[1068,38],[1292,27],[1300,26],[1308,23]],"kreuzberg":[[453,24],[461,26],[469,30],[754,46],[762,48],[770,50],[1051,62],[1060,56],[1068,62],[1292,60],[1300,53],[1308,43]],"prenzlauer_berg":[[453,18],[461,21],[469,21],[754,39],[762,39],[770,34],[1051,53],[1060,54],[1068,59],[1292,43],[1300,37],[1308,29]],"womens_club":[[453,9],[461,11],[469,14],[754,34],[762,34],[770,34],[1051,57],[1060,59],[1068,70],[1292,77],[1300,76],[1308,77]]}},{"date":"2026-09-25","label":"Yesterday","horizon":-1,"weekday":"Friday","schulferien":0,"tmax":15.5,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[1,13,28,34,37,41,46,41,44,45,48,54,55,37,40,46,28,22],"lo":[0,3,17,23,26,31,26,22,24,25,28,32,34,16,19,24,6,20],"hi":[8,20,35,41,44,48,52,48,50,51,54,64,65,47,50,56,38,23]},"charlottenburg":{"pt":[1,11,20,23,26,31,35,33,35,36,39,39,38,19,32,37,30,20],"lo":[0,0,9,12,16,20,15,13,15,16,19,18,16,0,10,15,9,18],"hi":[8,18,27,30,33,38,41,39,41,42,45,50,48,29,42,47,40,20]},"friedrichshain":{"pt":[3,19,32,38,42,46,50,45,49,50,55,66,70,41,42,44,22,10],"lo":[0,8,21,28,31,35,30,25,29,30,35,45,49,20,20,23,1,8],"hi":[10,26,39,45,49,53,56,51,55,56,61,76,80,51,52,55,32,10]},"gesundbrunnen":{"pt":[1,11,24,29,33,38,43,40,43,42,45,51,47,37,38,41,33,24],"lo":[0,1,14,18,22,28,23,21,23,23,26,30,25,16,17,20,12,22],"hi":[8,18,31,36,40,45,49,47,49,49,52,61,57,47,48,52,44,25]},"kreuzberg":{"pt":[2,14,28,34,38,43,49,43,48,48,50,54,49,38,39,40,28,21],"lo":[0,3,18,24,28,33,29,23,29,28,30,33,27,17,17,19,7,19],"hi":[9,21,35,41,45,50,55,49,55,54,56,64,59,49,49,50,38,21]},"prenzlauer_berg":{"pt":[4,14,26,31,34,37,39,36,39,38,40,40,40,29,25,33,25,15],"lo":[0,3,16,21,24,26,19,16,19,18,20,19,19,8,4,12,4,13],"hi":[11,21,33,38,41,44,45,42,45,44,46,51,50,39,35,44,35,16]},"womens_club":{"pt":[0,6,16,19,23,31,38,39,43,42,45,56,59,52,49,53,54,34],"lo":[0,0,5,8,13,20,19,19,23,22,26,35,38,31,28,31,32,32],"hi":[7,13,23,26,30,37,45,45,49,48,52,66,69,62,59,63,64,34]}},"actuals":{"boetzow":[[458,21],[466,25],[475,28],[540,0],[548,39],[556,37],[758,41],[766,42],[774,39],[852,40],[860,39],[868,41],[1055,58],[1063,56],[1071,54],[1296,44],[1304,43],[1312,43]],"charlottenburg":[[458,17],[466,18],[475,17],[540,20],[548,22],[556,23],[758,30],[766,32],[774,29],[852,32],[860,35],[868,37],[1055,33],[1063,35],[1071,39],[1296,32],[1304,32],[1312,30]],"friedrichshain":[[458,31],[466,37],[475,34],[540,0],[548,40],[556,40],[758,46],[766,51],[774,51],[852,55],[860,54],[868,56],[1055,74],[1063,73],[1071,77],[1296,29],[1304,25],[1312,23]],"gesundbrunnen":[[458,13],[467,15],[475,15],[540,20],[548,21],[556,22],[758,22],[766,22],[774,24],[852,27],[860,30],[868,29],[1055,37],[1063,36],[1071,35],[1296,17],[1304,18],[1312,17]],"kreuzberg":[[458,32],[466,34],[475,32],[540,0],[548,38],[556,40],[758,55],[766,58],[774,52],[852,60],[860,54],[868,57],[1055,62],[1063,66],[1071,63],[1296,30],[1304,31],[1312,26]],"prenzlauer_berg":[[458,17],[466,19],[475,21],[540,33],[548,34],[556,36],[758,35],[766,38],[774,39],[852,43],[860,42],[868,44],[1055,48],[1063,51],[1071,53],[1296,22],[1304,23],[1312,21]],"womens_club":[[458,8],[466,14],[475,17],[540,0],[548,32],[556,32],[758,45],[766,46],[774,45],[852,49],[860,46],[868,45],[1055,68],[1063,69],[1071,74],[1296,59],[1304,57],[1312,56]]}},{"date":"2026-09-26","label":"Today","horizon":0,"weekday":"Saturday","schulferien":0,"tmax":21.5,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[0,3,11,21,41,53,61,57,58,51,56,46,44,33,36,36,5,3],"lo":[0,0,0,11,30,42,41,37,38,31,36,25,23,12,15,14,0,1],"hi":[7,10,18,28,47,60,67,63,64,57,62,56,54,43,46,46,15,3]},"charlottenburg":{"pt":[0,5,9,15,28,34,41,40,39,32,36,30,28,15,24,26,18,13],"lo":[0,0,0,5,17,23,21,20,19,12,17,9,7,0,3,5,0,11],"hi":[7,12,16,22,35,41,47,46,45,38,43,40,39,25,34,36,29,14]},"friedrichshain":{"pt":[2,5,13,24,47,58,62,56,57,51,55,45,42,26,31,32,3,0],"lo":[0,0,3,13,37,48,42,37,37,31,36,24,21,4,10,11,0,0],"hi":[9,12,20,31,54,65,68,63,63,57,61,55,53,36,42,42,13,1]},"gesundbrunnen":{"pt":[0,5,12,20,34,42,50,49,49,41,46,37,35,28,27,29,17,16],"lo":[0,0,1,9,24,32,30,29,29,21,26,16,13,7,6,8,0,14],"hi":[7,12,18,27,41,49,56,55,55,47,52,47,45,38,37,39,27,16]},"kreuzberg":{"pt":[1,6,14,23,37,48,54,49,52,45,49,38,33,27,26,27,12,14],"lo":[0,0,3,13,27,37,34,29,32,25,29,17,11,6,5,6,0,12],"hi":[8,13,21,30,44,54,60,55,58,51,55,48,43,37,36,37,22,14]},"prenzlauer_berg":{"pt":[3,6,13,21,33,38,43,42,41,32,37,31,30,24,23,25,15,10],"lo":[0,0,2,10,22,27,23,22,21,12,17,9,9,3,2,3,0,8],"hi":[10,13,19,28,40,45,49,48,47,38,43,41,40,34,33,35,26,11]},"womens_club":{"pt":[0,1,4,10,23,32,42,44,46,38,44,39,43,42,40,26,0,5],"lo":[0,0,0,0,13,21,22,24,26,18,24,18,22,20,19,4,0,3],"hi":[7,8,11,17,30,39,48,50,52,44,50,50,53,52,50,36,10,6]}},"actuals":{"boetzow":[[469,0],[477,0],[485,3],[741,55],[749,57],[758,51],[995,37],[1003,35],[1011,34],[1206,44],[1214,41],[1222,40]],"charlottenburg":[[469,8],[477,8],[485,9],[741,32],[749,34],[758,36],[995,29],[1003,30],[1011,29],[1206,30],[1214,29],[1222,24]],"friedrichshain":[[469,0],[477,0],[485,9],[741,70],[749,76],[758,71],[995,41],[1003,40],[1011,40],[1206,45],[1214,45],[1222,44]],"gesundbrunnen":[[469,9],[477,9],[485,10],[741,35],[750,36],[758,34],[995,23],[1003,25],[1011,25],[1206,21],[1214,21],[1222,23]],"kreuzberg":[[469,10],[477,12],[485,13],[741,69],[749,71],[758,63],[995,43],[1003,46],[1011,45],[1206,41],[1214,42],[1222,39]],"prenzlauer_berg":[[469,8],[477,10],[485,12],[741,44],[749,47],[758,42],[995,26],[1003,28],[1011,25],[1206,26],[1214,28],[1222,27]],"womens_club":[[469,0],[477,0],[485,0],[741,38],[749,38],[758,38],[995,38],[1003,38],[1011,38],[1206,55],[1214,54],[1222,54]]}},{"date":"2026-09-27","label":"Tomorrow","horizon":1,"weekday":"Sunday","schulferien":0,"tmax":23.7,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[0,2,8,19,37,50,59,56,56,51,59,52,62,45,42,42,5,3],"lo":[0,0,0,8,26,40,39,36,37,31,39,31,41,23,21,21,0,1],"hi":[7,9,15,26,44,57,65,62,63,57,65,62,72,55,52,53,15,3]},"charlottenburg":{"pt":[0,4,7,14,25,32,39,38,38,34,40,34,37,19,29,29,20,14],"lo":[0,0,0,3,15,21,19,18,18,14,20,13,16,0,8,8,0,12],"hi":[7,11,14,21,32,39,45,44,44,40,46,44,47,30,39,40,30,15]},"friedrichshain":{"pt":[1,5,12,22,42,55,67,59,61,55,62,58,69,43,40,39,3,0],"lo":[0,0,1,12,32,44,47,39,41,35,42,37,48,22,19,18,0,0],"hi":[8,12,19,29,49,62,73,65,67,61,68,68,79,54,51,49,14,1]},"gesundbrunnen":{"pt":[0,3,9,17,31,40,47,47,47,42,49,42,45,36,35,34,17,16],"lo":[0,0,0,6,20,29,27,27,27,23,29,21,24,15,13,13,0,14],"hi":[7,10,16,24,37,47,53,53,53,48,55,52,55,46,45,44,27,16]},"kreuzberg":{"pt":[1,4,11,21,35,47,55,51,55,48,54,44,47,37,35,33,13,15],"lo":[0,0,1,10,24,36,35,32,35,28,34,22,26,16,14,12,0,12],"hi":[7,11,18,28,41,54,61,57,61,54,60,54,58,47,45,43,23,15]},"prenzlauer_berg":{"pt":[3,5,10,18,30,36,41,40,41,35,40,35,39,29,22,27,16,11],"lo":[0,0,0,8,19,25,21,21,21,15,21,14,18,8,1,5,0,9],"hi":[10,12,17,25,37,43,47,47,47,41,46,45,50,39,32,37,26,11]},"womens_club":{"pt":[0,0,2,8,22,32,42,44,47,40,46,46,58,54,46,32,1,5],"lo":[0,0,0,0,11,21,22,24,27,20,26,25,37,33,25,11,0,3],"hi":[7,7,9,15,29,39,48,50,53,46,52,56,68,64,57,42,11,6]}},"actuals":{}},{"date":"2026-09-28","label":"In 2 days","horizon":2,"weekday":"Monday","schulferien":0,"tmax":23.5,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[1,14,26,32,33,38,42,38,39,38,44,56,46,49,51,60,28,25],"lo":[0,3,16,22,23,28,22,18,20,18,25,34,24,28,30,39,7,23],"hi":[8,21,33,39,40,45,48,44,45,44,51,66,56,59,61,70,39,26]},"charlottenburg":{"pt":[1,11,19,22,24,29,34,32,33,31,37,42,29,34,44,47,34,23],"lo":[0,0,8,11,14,19,14,13,13,11,17,21,7,13,23,25,13,21],"hi":[8,18,26,29,31,36,40,39,39,37,43,52,39,44,55,57,44,24]},"friedrichshain":{"pt":[3,19,30,36,37,42,48,42,45,43,50,66,64,56,55,61,26,14],"lo":[0,8,20,26,27,31,28,22,25,23,30,45,42,35,33,39,5,12],"hi":[10,26,37,43,44,49,54,48,51,49,56,76,74,66,65,71,36,15]},"gesundbrunnen":{"pt":[1,11,23,28,32,37,42,41,42,38,44,58,46,60,60,61,35,28],"lo":[0,0,13,18,21,27,22,21,22,18,24,36,25,39,38,40,13,26],"hi":[7,17,30,35,39,44,48,47,48,44,50,68,56,70,70,71,45,28]},"kreuzberg":{"pt":[2,13,27,33,37,42,47,43,47,43,48,59,48,61,62,61,31,26],"lo":[0,2,16,23,26,31,28,23,27,23,28,38,27,39,41,40,10,24],"hi":[8,20,34,40,44,49,53,49,53,49,54,70,58,71,72,71,41,27]},"prenzlauer_berg":{"pt":[4,13,25,31,34,36,39,38,39,34,40,44,31,44,38,45,30,20],"lo":[0,3,15,20,24,26,19,18,19,14,20,23,9,23,17,24,9,17],"hi":[11,20,32,38,41,43,45,44,45,40,46,54,41,55,48,55,40,20]},"womens_club":{"pt":[0,6,15,18,21,28,35,37,39,34,41,57,50,67,63,79,66,43],"lo":[0,0,5,7,11,17,16,17,19,14,21,36,29,45,42,58,44,41],"hi":[7,13,22,25,28,35,41,43,45,40,47,67,60,77,73,90,76,43]}},"actuals":{}},{"date":"2026-09-29","label":"In 3 days","horizon":3,"weekday":"Tuesday","schulferien":0,"tmax":24.2,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[1,16,29,35,36,40,44,39,38,40,46,57,51,48,55,60,28,20],"lo":[0,5,19,25,26,30,24,19,19,20,26,36,30,27,33,39,7,18],"hi":[8,23,36,42,43,47,50,45,44,46,52,68,61,58,65,70,38,20]},"charlottenburg":{"pt":[1,13,21,25,27,31,35,33,30,32,38,43,33,32,47,47,34,22],"lo":[0,2,11,14,17,21,15,13,10,12,19,21,12,11,26,25,12,20],"hi":[8,20,28,31,34,38,41,39,36,38,45,53,43,42,57,57,44,22]},"friedrichshain":{"pt":[3,20,33,39,41,44,47,42,42,45,53,70,69,57,59,63,27,12],"lo":[0,10,22,28,30,34,27,22,22,25,34,49,48,35,38,42,6,10],"hi":[10,27,40,46,48,51,53,48,48,51,60,80,80,67,70,73,37,12]},"gesundbrunnen":{"pt":[1,12,25,30,34,39,43,40,38,40,46,59,49,59,63,63,36,27],"lo":[0,1,15,20,23,29,23,21,18,20,26,38,28,38,42,41,14,25],"hi":[8,19,32,37,41,46,49,47,44,46,52,69,60,69,73,73,46,27]},"kreuzberg":{"pt":[2,15,30,36,40,45,50,43,42,44,49,61,54,61,66,64,33,27],"lo":[0,5,19,26,29,34,30,23,22,24,29,39,32,40,45,42,12,25],"hi":[9,22,37,43,47,52,56,49,48,50,55,71,64,71,77,74,43,28]},"prenzlauer_berg":{"pt":[4,15,27,33,36,38,40,37,34,35,41,45,35,43,41,46,31,18],"lo":[0,4,17,22,26,27,20,17,14,15,21,23,14,22,20,25,9,16],"hi":[11,22,34,40,43,45,46,43,40,41,47,55,45,53,52,57,41,18]},"womens_club":{"pt":[0,7,17,19,23,29,36,37,36,36,43,59,56,66,68,81,66,41],"lo":[0,0,6,9,12,19,17,17,16,16,23,38,34,45,46,60,45,39],"hi":[7,13,24,26,30,36,43,43,42,42,49,70,66,77,78,91,76,42]}},"actuals":{}},{"date":"2026-09-30","label":"In 4 days","horizon":4,"weekday":"Wednesday","schulferien":0,"tmax":23.3,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[1,15,28,34,35,39,42,38,37,38,44,56,57,49,51,60,29,25],"lo":[0,4,17,24,25,28,22,18,17,18,24,35,36,28,30,39,7,23],"hi":[8,22,35,41,42,46,48,44,43,44,50,66,67,60,62,71,39,26]},"charlottenburg":{"pt":[1,12,20,24,26,30,34,32,29,30,37,42,39,33,41,46,34,24],"lo":[0,1,10,13,15,19,14,12,9,11,18,21,18,12,19,25,13,21],"hi":[8,19,27,30,33,37,40,38,35,37,44,52,50,43,51,57,44,24]},"friedrichshain":{"pt":[3,20,32,38,39,43,45,41,41,42,51,69,77,58,56,62,26,14],"lo":[0,9,21,28,29,32,25,21,21,22,31,47,56,36,35,40,5,12],"hi":[10,27,39,45,46,50,51,47,47,48,57,79,88,68,66,72,36,15]},"gesundbrunnen":{"pt":[1,11,25,30,33,38,42,41,37,38,44,58,59,59,56,61,35,28],"lo":[0,1,14,19,23,28,22,21,17,18,24,36,38,38,35,40,13,26],"hi":[8,18,32,37,40,45,48,47,43,44,50,68,69,70,66,71,45,28]},"kreuzberg":{"pt":[2,14,29,35,39,43,48,42,41,42,48,61,59,60,57,59,31,25],"lo":[0,4,18,25,28,33,28,22,21,22,28,39,37,38,36,38,9,23],"hi":[9,21,36,42,46,50,54,48,47,48,54,71,69,70,68,70,41,26]},"prenzlauer_berg":{"pt":[4,15,27,33,36,37,39,37,34,34,40,44,43,43,36,44,30,19],"lo":[0,4,17,22,25,27,19,17,14,14,20,23,21,22,15,23,9,17],"hi":[11,21,34,40,43,44,45,43,40,40,46,54,53,53,46,54,40,20]},"womens_club":{"pt":[0,6,16,18,22,28,35,37,35,33,42,59,64,67,62,80,66,43],"lo":[0,0,5,8,11,18,15,17,15,14,22,38,42,46,40,59,44,41],"hi":[7,13,23,25,29,35,41,43,41,40,48,69,74,77,72,91,76,43]}},"actuals":{}},{"date":"2026-10-01","label":"In 5 days","horizon":5,"weekday":"Thursday","schulferien":0,"tmax":22.9,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[1,14,27,33,35,39,41,37,39,38,43,47,54,46,44,57,23,22],"lo":[0,4,17,23,24,28,21,18,20,18,23,26,33,24,23,36,2,20],"hi":[8,21,34,40,42,46,47,44,46,44,49,57,64,56,55,67,34,22]},"charlottenburg":{"pt":[1,11,20,22,25,29,32,31,32,30,36,32,35,28,33,43,29,21],"lo":[0,1,9,11,14,19,12,11,12,11,16,11,14,7,12,22,8,19],"hi":[8,18,26,29,32,36,38,37,38,37,42,42,45,38,44,53,39,22]},"friedrichshain":{"pt":[3,19,30,37,39,42,44,40,44,42,48,55,71,54,49,59,20,11],"lo":[0,8,20,26,28,31,24,20,24,22,28,34,50,32,28,38,0,9],"hi":[10,26,37,44,45,49,50,46,50,48,54,65,81,64,59,69,30,11]},"gesundbrunnen":{"pt":[1,11,23,28,32,37,39,38,40,37,42,45,54,53,48,58,30,27],"lo":[0,0,13,17,21,27,20,18,20,17,22,24,33,32,27,37,9,24],"hi":[8,17,30,34,39,44,46,44,46,43,48,55,64,63,59,68,40,27]},"kreuzberg":{"pt":[2,13,27,33,37,42,46,40,44,42,45,48,53,55,50,57,26,24],"lo":[0,2,16,22,27,32,26,20,24,22,25,26,32,34,29,36,4,21],"hi":[9,20,34,40,44,49,52,46,50,48,51,58,63,65,61,68,36,24]},"prenzlauer_berg":{"pt":[4,14,26,31,34,36,37,35,37,34,39,35,39,38,27,42,25,17],"lo":[0,3,16,20,24,25,17,15,17,14,19,14,18,17,5,20,4,15],"hi":[11,21,33,38,41,43,43,41,43,40,45,45,49,48,37,52,35,18]},"womens_club":{"pt":[0,6,16,18,22,29,35,36,39,36,42,48,61,63,54,75,62,44],"lo":[0,0,5,8,12,19,15,17,19,16,22,27,39,41,33,53,40,42],"hi":[7,13,23,25,29,36,41,43,45,42,48,59,71,73,64,85,72,45]}},"actuals":{}},{"date":"2026-10-02","label":"In 6 days","horizon":6,"weekday":"Friday","schulferien":0,"tmax":18.7,"rain_mm":0.0,"forecast":{"boetzow":{"pt":[1,13,28,34,37,41,46,41,44,45,48,54,55,37,40,46,28,22],"lo":[0,3,17,23,26,31,26,22,24,25,28,32,34,16,19,24,6,20],"hi":[8,20,35,41,44,48,52,48,50,51,54,64,65,47,50,56,38,23]},"charlottenburg":{"pt":[1,11,20,23,26,31,35,33,35,36,39,39,38,19,32,37,30,20],"lo":[0,0,9,12,16,20,15,13,15,16,19,18,16,0,10,15,9,18],"hi":[8,18,27,30,33,38,41,39,41,42,45,50,48,29,42,47,40,20]},"friedrichshain":{"pt":[3,19,32,38,42,46,50,45,49,50,55,66,70,41,42,44,22,10],"lo":[0,8,21,28,31,35,30,25,29,30,35,45,49,20,20,23,1,8],"hi":[10,26,39,45,49,53,56,51,55,56,61,76,80,51,52,55,32,10]},"gesundbrunnen":{"pt":[1,11,24,29,33,38,43,40,43,42,45,51,47,37,38,41,33,24],"lo":[0,1,14,18,22,28,23,21,23,23,26,30,25,16,17,20,12,22],"hi":[8,18,31,36,40,45,49,47,49,49,52,61,57,47,48,52,44,24]},"kreuzberg":{"pt":[2,14,28,34,38,43,49,43,48,48,50,54,49,38,39,40,28,21],"lo":[0,3,18,24,28,33,29,23,29,28,30,33,27,17,17,19,7,18],"hi":[9,21,35,41,45,50,55,49,55,54,56,64,59,49,49,50,38,21]},"prenzlauer_berg":{"pt":[4,14,26,31,34,37,39,36,39,38,40,40,40,29,25,33,25,15],"lo":[0,3,16,21,24,26,19,16,19,18,20,19,19,8,4,12,4,13],"hi":[11,21,33,38,41,44,45,42,45,44,46,51,50,39,35,44,35,15]},"womens_club":{"pt":[0,6,16,19,23,31,38,39,43,42,45,56,59,52,49,53,54,34],"lo":[0,0,5,8,13,20,19,19,23,22,26,35,38,31,28,31,32,31],"hi":[7,13,23,26,30,37,45,45,49,48,52,66,69,62,59,63,64,34]}},"actuals":{}}]};
+
+const SVGNS = "http://www.w3.org/2000/svg";
+const $ = id => document.getElementById(id);
+const state = {
+  day: DATA.today_index ?? 0,
+  studio: localStorage.getItem("jr-studio") || "charlottenburg",
+};
+if (!DATA.studios.includes(state.studio)) state.studio = DATA.studios[0];
+
+const WD_SHORT = { Monday:"Mon", Tuesday:"Tue", Wednesday:"Wed", Thursday:"Thu",
+                   Friday:"Fri", Saturday:"Sat", Sunday:"Sun" };
+const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const fmtDate = iso => `${MON[+iso.slice(5,7) - 1]} ${iso.slice(8,10)}`;
+
+// Graduated forecast reliability by lead time. alpha dims the forecast curve.
+function confidence(horizon) {
+  if (horizon < 0)   return { on: 0, alpha: 1,    color: "--text-muted", label: "Measured day" };
+  if (horizon <= 1)  return { on: 3, alpha: 1,    color: "--conf-high",  label: "High forecast reliability" };
+  if (horizon <= 3)  return { on: 2, alpha: 0.72, color: "--conf-mod",   label: "Moderate reliability" };
+  return               { on: 1, alpha: 0.5,  color: "--conf-low",   label: "Low reliability · long-range" };
+}
+const hhmm = m => `${String(Math.floor(m/60)).padStart(2,"0")}:${String(m%60).padStart(2,"0")}`;
+
+function el(tag, attrs, parent) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const k in attrs) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+function div(cls, parent, text) {
+  const n = document.createElement("div");
+  if (cls) n.className = cls;
+  if (text !== undefined) n.textContent = text;
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+/* ---------- Controls ---------- */
+function buildControls() {
+  const seg = $("daySeg");
+  DATA.days.forEach((d, i) => {
+    const b = document.createElement("button");
+    b.textContent = `${d.label} · ${WD_SHORT[d.weekday] || d.weekday} ${fmtDate(d.date)}`;
+    b.setAttribute("aria-pressed", String(i === state.day));
+    b.addEventListener("click", () => { state.day = i; render(); });
+    seg.appendChild(b);
+  });
+  const chips = $("chips");
+  DATA.studios.forEach(s => {
+    const b = document.createElement("button");
+    b.textContent = DATA.labels[s] || s;
+    b.dataset.studio = s;
+    b.setAttribute("aria-pressed", String(s === state.studio));
+    b.addEventListener("click", () => {
+      state.studio = s;
+      localStorage.setItem("jr-studio", s);
+      render();
+    });
+    chips.appendChild(b);
+  });
+}
+function syncControls() {
+  [...$("daySeg").children].forEach((b, i) =>
+    b.setAttribute("aria-pressed", String(i === state.day)));
+  [...$("chips").children].forEach(b =>
+    b.setAttribute("aria-pressed", String(b.dataset.studio === state.studio)));
+}
+
+/* ---------- Rendering ---------- */
+const M = { l: 38, r: 14, t: 18, b: 30 }, W = 720, H = 340;
+const xOf = h => M.l + (h - DATA.hours[0]) / (DATA.hours[DATA.hours.length-1] - DATA.hours[0]) * (W - M.l - M.r);
+const yOf = v => H - M.b - v / 100 * (H - M.t - M.b);
+
+function render() {
+  syncControls();
+  const day = DATA.days[state.day];
+  const fc  = day.forecast[state.studio];
+  const act = (day.actuals && day.actuals[state.studio]) || [];
+  const hrs = DATA.hours;
+  const label = DATA.labels[state.studio] || state.studio;
+
+  $("meta").textContent =
+    `As of ${DATA.generated} · model trained on ${DATA.train_days} days ` +
+    `(${DATA.train_rows.toLocaleString("en-US")} measurements, latest: ${DATA.last_data})`;
+
+  $("cardTitle").textContent = `${label} · ${day.weekday}, ${fmtDate(day.date)}`;
+  const ctx = [];
+  if (day.tmax != null) ctx.push(`max ${day.tmax.toLocaleString("en-US")} °C`);
+  if (day.rain_mm != null) ctx.push(day.rain_mm > 0.1 ? `${day.rain_mm.toLocaleString("en-US")} mm rain` : "no rain");
+  ctx.push(day.schulferien ? "school holidays" : "no school holidays");
+  $("cardCtx").textContent = ctx.join(" · ");
+
+  // Graduated reliability meter (further out = less certain)
+  const cf = confidence(day.horizon);
+  const conf = $("cardConf");
+  conf.textContent = "";
+  conf.style.setProperty("--cc", `var(${cf.color})`);
+  if (cf.on > 0) {
+    const meter = div("meter", conf);
+    for (let k = 0; k < 3; k++) div("seg3" + (k < cf.on ? " on" : ""), meter);
+  }
+  div("txt", conf, cf.label);
+
+  // Tiles
+  const peakI = fc.pt.indexOf(Math.max(...fc.pt));
+  $("tPeak").textContent = `${fc.pt[peakI]} %`;
+  $("tPeakSub").textContent = `at ${String(hrs[peakI]).padStart(2,"0")}:00 · band ${fc.lo[peakI]}–${fc.hi[peakI]} %`;
+  $("tMean").textContent = `${Math.round(fc.pt.reduce((a,b)=>a+b,0) / fc.pt.length)} %`;
+  if (act.length) {
+    const [m, v] = act[act.length - 1];
+    $("tLast").textContent = `${v} %`;
+    $("tLastSub").textContent = `${day.label.toLowerCase()} at ${hhmm(m)}`;
+  } else {
+    $("tLast").textContent = "—";
+    $("tLastSub").textContent = state.day === DATA.today_index ? "no measurement yet" : "in the future";
+  }
+
+  drawChart(fc, act, hrs, peakI, cf.alpha);
+  drawLegend(act.length > 0, day.label);
+  drawTable(fc, act, hrs);
+}
+
+function drawChart(fc, act, hrs, peakI, alpha = 1) {
+  const svg = $("chart");
+  svg.textContent = "";
+  const css = getComputedStyle(document.documentElement);
+  const col = n => css.getPropertyValue(n).trim();
+
+  // Gridlines + y-Achse
+  for (const v of [0, 25, 50, 75, 100]) {
+    el("line", { x1: M.l, x2: W - M.r, y1: yOf(v), y2: yOf(v),
+                 stroke: v === 0 ? col("--axis") : col("--grid"), "stroke-width": 1 }, svg);
+    el("text", { x: M.l - 7, y: yOf(v) + 4, "text-anchor": "end", "font-size": 11,
+                 fill: col("--text-muted") }, svg).textContent = v;
+  }
+  // x-Ticks alle 2 h
+  for (let h = hrs[0]; h <= hrs[hrs.length-1]; h += 2) {
+    el("text", { x: xOf(h), y: H - M.b + 17, "text-anchor": "middle", "font-size": 11,
+                 fill: col("--text-muted") }, svg).textContent = String(h).padStart(2,"0");
+  }
+  el("text", { x: W - M.r, y: H - M.b + 17, "text-anchor": "end", "font-size": 11,
+               fill: col("--text-muted") }, svg).textContent = "h";
+
+  // 80%-Band (Wash) + Prognoselinie
+  const up = hrs.map((h,i) => `${i?"L":"M"}${xOf(h)},${yOf(fc.hi[i])}`).join("");
+  const dn = [...hrs.keys()].reverse().map(i => `L${xOf(hrs[i])},${yOf(fc.lo[i])}`).join("");
+  el("path", { d: up + dn + "Z", fill: col("--forecast"),
+               opacity: (0.12 * alpha).toFixed(3) }, svg);
+  el("path", { d: hrs.map((h,i) => `${i?"L":"M"}${xOf(h)},${yOf(fc.pt[i])}`).join(""),
+               fill: "none", stroke: col("--forecast"), "stroke-width": 2,
+               "stroke-opacity": alpha,
+               "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+
+  // Peak: einziges Direktlabel + Marker
+  el("circle", { cx: xOf(hrs[peakI]), cy: yOf(fc.pt[peakI]), r: 4,
+                 fill: col("--forecast"), stroke: col("--surface-1"), "stroke-width": 2 }, svg);
+  el("text", { x: xOf(hrs[peakI]), y: yOf(fc.pt[peakI]) - 10, "text-anchor": "middle",
+               "font-size": 12, "font-weight": 650, fill: col("--text-primary") },
+     svg).textContent = `${fc.pt[peakI]} %`;
+
+  // Ist-Messungen
+  for (const [m, v] of act) {
+    el("circle", { cx: xOf(m / 60), cy: yOf(v), r: 4, fill: col("--actual"),
+                   stroke: col("--surface-1"), "stroke-width": 2 }, svg);
+  }
+
+  // Crosshair + Hover-Layer
+  const cross = el("line", { y1: M.t, y2: H - M.b, stroke: col("--axis"),
+                             "stroke-width": 1, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: M.l, y: M.t, width: W - M.l - M.r, height: H - M.t - M.b,
+                           fill: "transparent", tabindex: 0 }, svg);
+  let focusI = -1;
+  const show = i => {
+    focusI = i;
+    const h = hrs[i];
+    cross.setAttribute("x1", xOf(h)); cross.setAttribute("x2", xOf(h));
+    cross.setAttribute("visibility", "visible");
+    tooltip(i, fc, act, hrs);
+  };
+  const hide = () => { focusI = -1; cross.setAttribute("visibility", "hidden");
+                       $("tooltip").style.display = "none"; };
+  hit.addEventListener("pointermove", ev => {
+    const r = svg.getBoundingClientRect();
+    const x = (ev.clientX - r.left) * W / r.width;
+    const h = DATA.hours[0] + (x - M.l) / (W - M.l - M.r) * (hrs[hrs.length-1] - hrs[0]);
+    show(Math.max(0, Math.min(hrs.length - 1, Math.round(h - hrs[0]))));
+  });
+  hit.addEventListener("pointerleave", hide);
+  hit.addEventListener("keydown", ev => {
+    if (ev.key === "ArrowRight") { show(Math.min(hrs.length - 1, focusI < 0 ? 0 : focusI + 1)); ev.preventDefault(); }
+    else if (ev.key === "ArrowLeft") { show(Math.max(0, focusI < 0 ? 0 : focusI - 1)); ev.preventDefault(); }
+    else if (ev.key === "Escape") hide();
+  });
+  hit.addEventListener("blur", hide);
+}
+
+function tooltip(i, fc, act, hrs) {
+  const tt = $("tooltip"), h = hrs[i];
+  tt.textContent = "";
+  div("tt-h", tt, `${String(h).padStart(2,"0")}:00`);
+  const css = getComputedStyle(document.documentElement);
+
+  const r1 = div("row", tt);
+  const k1 = div("key", r1); k1.style.borderTopColor = css.getPropertyValue("--forecast");
+  div("v", r1, `${fc.pt[i]} %`);
+  div("n", r1, "Forecast");
+  div("b", div("row", tt), `80% band: ${fc.lo[i]}–${fc.hi[i]} %`);
+
+  const near = act.filter(([m]) => Math.abs(m - h * 60) <= 30)
+                  .sort((a,b) => Math.abs(a[0]-h*60) - Math.abs(b[0]-h*60))[0];
+  if (near) {
+    const r2 = div("row", tt);
+    const k2 = div("key", r2); k2.style.borderTopColor = css.getPropertyValue("--actual");
+    div("v", r2, `${near[1]} %`);
+    div("n", r2, `actual ${hhmm(near[0])}`);
+  }
+
+  tt.style.display = "block";
+  const box = $("chart").getBoundingClientRect();
+  const px = (xOf(h) / W) * box.width;
+  tt.style.left = Math.min(px + 12, box.width - tt.offsetWidth - 4) + "px";
+  tt.style.top = "14px";
+}
+
+function drawLegend(hasActuals, dayLabel) {
+  const lg = $("legend");
+  lg.textContent = "";
+  const mk = (cls, txt) => { const it = div("item", lg); div(cls, it); div("", it, txt); };
+  mk("line", "Forecast");
+  mk("band", "80% band");
+  if (hasActuals) mk("dot", `Measurements ${dayLabel === "Today" ? "today" : dayLabel.toLowerCase()}`);
+}
+
+function drawTable(fc, act, hrs) {
+  const t = $("tbl");
+  t.textContent = "";
+  const tr = document.createElement("tr");
+  for (const h of ["Time", "Forecast", "80% band", "Actual (hourly avg)"]) {
+    const th = document.createElement("th"); th.textContent = h; tr.appendChild(th);
+  }
+  t.appendChild(tr);
+  for (let i = 0; i < hrs.length; i++) {
+    const row = document.createElement("tr");
+    const inHour = act.filter(([m]) => Math.floor(m / 60) === hrs[i]);
+    const ist = inHour.length
+      ? `${Math.round(inHour.reduce((a,[,v]) => a + v, 0) / inHour.length)} %` : "—";
+    for (const v of [`${String(hrs[i]).padStart(2,"0")}:00`, `${fc.pt[i]} %`,
+                     `${fc.lo[i]}–${fc.hi[i]} %`, ist]) {
+      const td = document.createElement("td"); td.textContent = v; row.appendChild(td);
+    }
+    t.appendChild(row);
+  }
+}
+
+buildControls();
+render();
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+</script>
+</body>
+</html>
