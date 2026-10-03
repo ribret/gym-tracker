@@ -41,7 +41,7 @@ concurrency:
 
 jobs:
   collect:
-    timeout-minutes: 150       # 6 Runden a 20 Min ~ 1h45 + Puffer
+    timeout-minutes: 150       # 6 Runden a 20 Min = 2 h inkl. Warten auf Folgetermin + Puffer
     runs-on: ubuntu-latest      # Standard-Runner = fuer Public-Repos kostenlos
     permissions:
       contents: write           # CSV committen
@@ -68,6 +68,7 @@ jobs:
           FIREBASE_REFRESH_TOKEN: ${{ secrets.FIREBASE_REFRESH_TOKEN }}
           SAMPLES:          ${{ github.event.inputs.samples || '6' }}
           INTERVAL_SECONDS: ${{ github.event.inputs.interval_seconds || '1200' }}
+          CHAIN: ${{ vars.COLLECT_CHAIN != 'off' && github.event.inputs.chain != 'false' }}
         run: |
           set -u
           git config user.name  "gym-tracker[bot]"
@@ -96,10 +97,15 @@ jobs:
             fi
             echo "::endgroup::"
 
-            # driftfrei: bis zum festen Zeitpunkt START + i*INTERVAL schlafen
-            if [ "${i}" -lt "${SAMPLES}" ]; then
-              NEXT=$(( START + i * INTERVAL_SECONDS )); NOW=$(date +%s)
-              [ "${NEXT}" -gt "${NOW}" ] && sleep $(( NEXT - NOW ))
+            # driftfrei: bis zum festen Zeitpunkt START + i*INTERVAL schlafen. Nach der
+            # LETZTEN Runde (nur bei aktiver Kette) bis ~90 s vor dem naechsten Termin,
+            # damit die erste Runde des Nachfolgers im 20-Min-Takt liegt statt direkt
+            # nach dieser (sonst Doppelmessung an jeder Lauf-Grenze, gesehen 03.10.).
+            if [ "${i}" -lt "${SAMPLES}" ] || [ "${CHAIN}" = "true" ]; then
+              NEXT=$(( START + i * INTERVAL_SECONDS ))
+              [ "${i}" -eq "${SAMPLES}" ] && NEXT=$(( NEXT - 90 ))
+              NOW=$(date +%s)
+              if [ "${NEXT}" -gt "${NOW}" ]; then sleep $(( NEXT - NOW )); fi   # if-Form: Status 0 auch ohne Warten
             fi
           done
 

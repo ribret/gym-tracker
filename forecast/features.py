@@ -39,6 +39,9 @@ def load_raw(csv_path: str = CSV_DEFAULT) -> pd.DataFrame:
               "Bewoelkung_%", "Wind_kmh", "Ist_Wochenende", "Ist_Feiertag_BE",
               "Ist_Schulferien_BE"]:
         df[c] = pd.to_numeric(df[c], errors="coerce")
+    # exakte Dubletten (gleiches Studio + Minute) verwerfen; entstehen bei Doppellaeufen,
+    # z.B. an Lauf-Grenzen der Workflow-Kette. Roh-CSV bleibt unveraendert (Protokoll).
+    df = df.drop_duplicates(subset=["Studio", "Datum", "Uhrzeit"], keep="first")
     return df.sort_values("dt").reset_index(drop=True)
 
 
