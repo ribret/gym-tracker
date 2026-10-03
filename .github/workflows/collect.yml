@@ -1,43 +1,51 @@
 name: Gym Utilization Tracker
 
-# GitHub verwirft geplante schedule-Trigger unter Last massenhaft (beobachtet: nur
-# ~8-13 von 48 taeglichen 30-Min-Triggern starten tatsaechlich, alle erfolgreich).
-# Dichterer Cron hilft nicht - die wuerden genauso gedroppt. Loesung: jeder Lauf, der
-# WIRKLICH startet, sammelt in einer internen Schleife mehrfach (Self-Loop). So wird aus
-# unzuverlaessigen Triggern eine regelmaessige Abdeckung.
+# TAKTUNG (seit 03.10.2026):
+#   Charlottenburg (Fokus) jede Messrunde, Rundentakt 20 Min -> >= 2x pro Stunde, 24/7.
+#   Die uebrigen 6 Studios ~3x taeglich (~08/13/18 Uhr); Auswahl in gym_tracker.py
+#   (due_studios: letzte Messung >= 5 h alt, 08-21 Uhr Berlin).
 #
-# KOSTEN: Repo ist PUBLIC -> GitHub-Actions-Standard-Runner sind kostenlos und OHNE
-# Minutenlimit (auf jedem Plan, auch Free; das 2000-Min-Kontingent gilt nur fuer PRIVATE
-# Repos). Damit dieser Workflow guenstig bleibt, muss das Repo oeffentlich bleiben.
-# Laufdauer ist an den BEOBACHTETEN Trigger-Abstand gekoppelt: Juli ~90 Min, ab Mitte
-# Sept 2026 ~3-7 h (nur noch 4-8 Laeufe/Tag). Deshalb deckt ein Lauf ~4,3 h ab
-# (18 Messungen a 15 Min). Nachts gestartete Laeufe messen nur 1x (Auslastung ~0).
-# Ueberlappung faengt concurrency ab. Bei erneuter Drift Abstaende pruefen:
-#   gh run list --workflow=collect.yml --limit 20 --json createdAt
+# WARUM EINE KETTE: GitHub feuert den schedule-Cron nur best effort, seit Mitte Sept
+# 2026 nur noch 4-8x/Tag mit Abstaenden bis 7,3 h. Ein Job darf max. 6 h laufen, also
+# reicht keine noch so lange Schleife fuer "2x pro Stunde". Deshalb startet jeder Lauf
+# am Ende per workflow_dispatch den naechsten (GITHUB_TOKEN darf workflow_dispatch
+# ausnahmsweise ausloesen). Der Cron bleibt Sicherheitsnetz: reisst die Kette, startet
+# er sie neu. concurrency haelt immer genau einen Sampler aktiv + max. einen wartenden.
+#
+# KOSTEN: Repo ist PUBLIC -> Standard-Runner kostenlos ohne Minutenlimit. Muss public
+# bleiben, sonst sprengt der Dauerbetrieb das 2000-Min-Kontingent privater Repos.
+#
+# STATUS:   gh run list --workflow=collect.yml --limit 10
+# NOTAUS:   gh variable set COLLECT_CHAIN --body off   (Kette stoppt nach laufendem Job)
+#           gh workflow disable collect.yml            (alles aus, inkl. Cron)
+# WIEDER AN: gh variable delete COLLECT_CHAIN ; gh workflow run collect.yml
 
 on:
   schedule:
-    - cron: "*/30 * * * *"     # alle 30 Min ANFORDERN; GitHub feuert nur einen Teil davon
+    - cron: "*/30 * * * *"     # Sicherheitsnetz: (re)startet die Kette, falls sie reisst
   workflow_dispatch:
     inputs:
       samples:
-        description: "Messungen pro Lauf (aktive Stunden)"
-        default: "18"
+        description: "Messrunden pro Lauf"
+        default: "6"
       interval_seconds:
-        description: "Sekunden zwischen Messungen"
-        default: "900"
+        description: "Sekunden zwischen Messrunden"
+        default: "1200"
+      chain:
+        description: "Am Ende naechsten Lauf starten (true/false)"
+        default: "true"
 
-# nur EIN Sampler gleichzeitig; weitere Trigger warten statt zu ueberlappen
 concurrency:
   group: gym-collect
   cancel-in-progress: false
 
 jobs:
   collect:
-    timeout-minutes: 330       # Loop ~4,5 h; unter dem 6-h-Job-Limit
+    timeout-minutes: 150       # 6 Runden a 20 Min ~ 1h45 + Puffer
     runs-on: ubuntu-latest      # Standard-Runner = fuer Public-Repos kostenlos
     permissions:
-      contents: write
+      contents: write           # CSV committen
+      actions: write            # naechsten Lauf per workflow_dispatch starten
 
     steps:
       - name: Checkout
@@ -58,46 +66,45 @@ jobs:
         env:
           FIREBASE_API_KEY:       ${{ secrets.FIREBASE_API_KEY }}
           FIREBASE_REFRESH_TOKEN: ${{ secrets.FIREBASE_REFRESH_TOKEN }}
-          # aktive Stunden: 18 Messungen a 15 Min ~ 4,3 h Abdeckung (passend zu den
-          # ~3-7 h Trigger-Abstaenden seit Sept 2026). Nachts gestartet: 1 Messung.
-          SAMPLES_DAY:      ${{ github.event.inputs.samples || '18' }}
-          INTERVAL_SECONDS: ${{ github.event.inputs.interval_seconds || '900' }}
+          SAMPLES:          ${{ github.event.inputs.samples || '6' }}
+          INTERVAL_SECONDS: ${{ github.event.inputs.interval_seconds || '1200' }}
         run: |
           set -u
           git config user.name  "gym-tracker[bot]"
           git config user.email "gym-tracker@users.noreply.github.com"
-
-          # Nachts (Berlin 23-05 Uhr) nur 1 Messung: spart Compute, Nachtwerte sind ~0
-          BERLIN_H=$(TZ='Europe/Berlin' date +%H)
-          if [ "${BERLIN_H}" -ge 5 ] && [ "${BERLIN_H}" -lt 23 ]; then
-            SAMPLES="${SAMPLES_DAY}"
-          else
-            SAMPLES=1
-          fi
-          echo "Berlin-Stunde ${BERLIN_H} -> ${SAMPLES} Messung(en)"
+          START=$(date +%s)
 
           for i in $(seq 1 "${SAMPLES}"); do
-            echo "::group::Sample ${i}/${SAMPLES} ($(date -u '+%H:%M:%S') UTC)"
+            echo "::group::Runde ${i}/${SAMPLES} ($(TZ='Europe/Berlin' date '+%H:%M:%S') Berlin)"
 
-            # eine Messung (frischer Token-Refresh je Aufruf); einzelner Fehler killt den Lauf nicht
-            python gym_tracker.py || echo "WARN: Messung ${i} fehlgeschlagen, weiter"
+            # eine Messrunde (Studio-Auswahl in gym_tracker.py); Fehler killt den Lauf nicht
+            python gym_tracker.py || echo "WARN: Runde ${i} fehlgeschlagen, weiter"
 
             git add --all data/
             if git diff --cached --quiet; then
               echo "keine neuen Daten"
             else
-              git commit -m "data: $(date -u '+%Y-%m-%d %H:%M') UTC"
-              # robustes Push: gegen parallele Bot-Commits rebasen, mit Retry
+              git commit -q -m "data: $(date -u '+%Y-%m-%d %H:%M') UTC"
               pushed=0
               for try in 1 2 3; do
-                if git pull --rebase --autostash origin main && git push origin main; then
+                if git pull -q --rebase --autostash origin main && git push -q origin main; then
                   pushed=1; break
                 fi
                 echo "push-Retry ${try}"; sleep 5
               done
               [ "${pushed}" = 1 ] || echo "WARN: push nach 3 Versuchen fehlgeschlagen"
             fi
-
             echo "::endgroup::"
-            if [ "${i}" -lt "${SAMPLES}" ]; then sleep "${INTERVAL_SECONDS}"; fi
+
+            # driftfrei: bis zum festen Zeitpunkt START + i*INTERVAL schlafen
+            if [ "${i}" -lt "${SAMPLES}" ]; then
+              NEXT=$(( START + i * INTERVAL_SECONDS )); NOW=$(date +%s)
+              [ "${NEXT}" -gt "${NOW}" ] && sleep $(( NEXT - NOW ))
+            fi
           done
+
+      - name: Next run (chain)
+        if: ${{ !cancelled() && vars.COLLECT_CHAIN != 'off' && github.event.inputs.chain != 'false' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run collect.yml --ref main -R "${{ github.repository }}" && echo "naechster Lauf angestossen"

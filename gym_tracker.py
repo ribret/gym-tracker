@@ -326,6 +326,51 @@ def save(key: str, value: int, weather: dict, holidays: set, ferien: list):
             w.writerow(COLUMNS)
         w.writerow(row)
 
+# ── Mess-Taktung je Studio ───────────────────────────────────────────────────
+# Charlottenburg (Fokus) wird bei JEDER Messrunde abgefragt (Workflow-Takt 20 Min,
+# also >= 2x pro Stunde). Die uebrigen Studios nur ~3x taeglich: wenn ihre letzte
+# Messung >= OTHERS_MIN_GAP_H Stunden alt ist UND es zwischen OTHERS_FROM_H und
+# OTHERS_TO_H Uhr (Berlin) ist. Ergibt etwa 08/13/18 Uhr und holt nach Luecken
+# automatisch auf. Zustand kommt aus der CSV selbst, kein Extra-State noetig.
+FOCUS_STUDIOS     = {"charlottenburg"}
+OTHERS_MIN_GAP_H  = 5
+OTHERS_FROM_H     = 8
+OTHERS_TO_H       = 21     # inklusive
+
+def last_measurements() -> dict:
+    """Letzter Messzeitpunkt je Studio (naive Berlin-Ortszeit) aus der CSV."""
+    last = {}
+    if not CSV_FILE.exists():
+        return last
+    with open(CSV_FILE, encoding="utf-8") as f:
+        r = csv.reader(f, delimiter=";")
+        next(r, None)
+        for row in r:
+            if len(row) < 3:
+                continue
+            try:
+                t = datetime.strptime(f"{row[1]} {row[2]}", "%Y-%m-%d %H:%M")
+            except ValueError:
+                continue
+            if row[0] not in last or t > last[row[0]]:
+                last[row[0]] = t
+    return last
+
+def due_studios(now_local: datetime, last: dict) -> list:
+    """Welche Studios in dieser Messrunde abgefragt werden."""
+    if os.environ.get("STUDIOS_ALL") == "1":          # manueller Override
+        return list(GYMS)
+    in_window = OTHERS_FROM_H <= now_local.hour <= OTHERS_TO_H
+    due = []
+    for key in GYMS:
+        if key in FOCUS_STUDIOS:
+            due.append(key)
+        elif in_window:
+            t = last.get(key)
+            if t is None or now_local - t >= timedelta(hours=OTHERS_MIN_GAP_H):
+                due.append(key)
+    return due
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -337,9 +382,12 @@ if __name__ == "__main__":
     holidays    = fetch_holidays(now.year)
     ferien      = fetch_school_holidays(now.year)
 
-    print(f"\n[{now.strftime('%Y-%m-%d %H:%M')}]  Wetter je Studio (Temp/Regen/WMO)\n")
+    due = due_studios(now.replace(tzinfo=None), last_measurements())
+    print(f"\n[{now.strftime('%Y-%m-%d %H:%M')}]  Studios diese Runde: {len(due)}/{len(GYMS)} "
+          f"({', '.join(due)})\n")
 
-    for key, gym in GYMS.items():
+    for key in due:
+        gym = GYMS[key]
         try:
             weather = weather_all.get(key, _empty_weather())
             value = fetch_utilization(id_token, gym["id"])
