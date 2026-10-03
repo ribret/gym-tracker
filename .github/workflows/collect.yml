@@ -9,8 +9,11 @@ name: Gym Utilization Tracker
 # KOSTEN: Repo ist PUBLIC -> GitHub-Actions-Standard-Runner sind kostenlos und OHNE
 # Minutenlimit (auf jedem Plan, auch Free; das 2000-Min-Kontingent gilt nur fuer PRIVATE
 # Repos). Damit dieser Workflow guenstig bleibt, muss das Repo oeffentlich bleiben.
-# Zusaetzlich bewusst modest gehalten: aktive Stunden dicht, nachts nur 1 Messung
-# (nachts ist die Auslastung ~0 und informationsarm), kurze nicht-ueberlappende Laeufe.
+# Laufdauer ist an den BEOBACHTETEN Trigger-Abstand gekoppelt: Juli ~90 Min, ab Mitte
+# Sept 2026 ~3-7 h (nur noch 4-8 Laeufe/Tag). Deshalb deckt ein Lauf ~4,3 h ab
+# (18 Messungen a 15 Min). Nachts gestartete Laeufe messen nur 1x (Auslastung ~0).
+# Ueberlappung faengt concurrency ab. Bei erneuter Drift Abstaende pruefen:
+#   gh run list --workflow=collect.yml --limit 20 --json createdAt
 
 on:
   schedule:
@@ -19,10 +22,10 @@ on:
     inputs:
       samples:
         description: "Messungen pro Lauf (aktive Stunden)"
-        default: "3"
+        default: "18"
       interval_seconds:
         description: "Sekunden zwischen Messungen"
-        default: "480"
+        default: "900"
 
 # nur EIN Sampler gleichzeitig; weitere Trigger warten statt zu ueberlappen
 concurrency:
@@ -31,6 +34,7 @@ concurrency:
 
 jobs:
   collect:
+    timeout-minutes: 330       # Loop ~4,5 h; unter dem 6-h-Job-Limit
     runs-on: ubuntu-latest      # Standard-Runner = fuer Public-Repos kostenlos
     permissions:
       contents: write
@@ -54,10 +58,10 @@ jobs:
         env:
           FIREBASE_API_KEY:       ${{ secrets.FIREBASE_API_KEY }}
           FIREBASE_REFRESH_TOKEN: ${{ secrets.FIREBASE_REFRESH_TOKEN }}
-          # aktive Stunden: 3 Messungen a 8 Min ~ 16 Min Abdeckung (kurz genug, um den
-          # 30-Min-Cron nicht zu ueberlappen). Nachts nur 1 Messung.
-          SAMPLES_DAY:      ${{ github.event.inputs.samples || '3' }}
-          INTERVAL_SECONDS: ${{ github.event.inputs.interval_seconds || '480' }}
+          # aktive Stunden: 18 Messungen a 15 Min ~ 4,3 h Abdeckung (passend zu den
+          # ~3-7 h Trigger-Abstaenden seit Sept 2026). Nachts gestartet: 1 Messung.
+          SAMPLES_DAY:      ${{ github.event.inputs.samples || '18' }}
+          INTERVAL_SECONDS: ${{ github.event.inputs.interval_seconds || '900' }}
         run: |
           set -u
           git config user.name  "gym-tracker[bot]"
