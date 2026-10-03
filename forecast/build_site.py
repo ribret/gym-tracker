@@ -93,6 +93,39 @@ def fetch_ferien_periods(years) -> list | None:
     return periods if ok else None
 
 
+def fetch_public_holidays(years) -> dict | None:
+    """Gesetzliche Feiertage Berlin (bundesweit + Land) via openHolidays API.
+    Rueckgabe {date: englischer Name}. None = API nicht erreichbar."""
+    out, ok = {}, False
+    for y in sorted(set(years)):
+        url = (f"{OPENHOLIDAYS_BASE}/PublicHolidays?countryIsoCode=DE"
+               f"&subdivisionCode=DE-BE&languageIsoCode=EN"
+               f"&validFrom={y}-01-01&validTo={y}-12-31")
+        try:
+            req = urllib.request.Request(url, headers={"Accept": "application/json"})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                for h in json.load(r):
+                    s = dt.date.fromisoformat(h["startDate"])
+                    e = dt.date.fromisoformat(h["endDate"])
+                    name = (h.get("name") or [{}])[0].get("text", "Public holiday")
+                    while s <= e:
+                        out[s] = name
+                        s += dt.timedelta(days=1)
+            ok = True
+        except Exception as e:
+            print(f"[warn] Feiertage-Abruf {y} fehlgeschlagen ({e}).", file=sys.stderr)
+    return out if ok else None
+
+
+def feiertag_name(d: dt.date, holidays: dict | None, raw: pd.DataFrame) -> str | None:
+    """Feiertagsname des Zieltags oder None. Fallback ohne API: CSV-Flag (nur fuer
+    Tage mit Messungen, Name dann generisch)."""
+    if holidays is not None:
+        return holidays.get(d)
+    r = raw.loc[raw["Datum"] == d.isoformat(), "Ist_Feiertag_BE"].dropna()
+    return "Public holiday" if len(r) and int(r.iloc[-1]) == 1 else None
+
+
 def is_schulferien(d: dt.date, periods: list | None, raw: pd.DataFrame) -> int:
     """Ferien-Flag fuer den Zieltag; Fallback auf den juengsten CSV-Wert."""
     if periods is not None:
@@ -124,6 +157,7 @@ def main():
 
     weather = fetch_weather(dates[0].isoformat(), dates[-1].isoformat())
     ferien = fetch_ferien_periods({d.year for d in dates})
+    holidays = fetch_public_holidays({d.year for d in dates})
 
     days = []
     for di, d in enumerate(dates):
@@ -132,11 +166,13 @@ def main():
         temp = np.array([w.get(h, (np.nan, np.nan))[0] for h in hours], float)
         prec = np.array([w.get(h, (np.nan, np.nan))[1] for h in hours], float)
         sf = is_schulferien(d, ferien, raw)
+        ft = feiertag_name(d, holidays, raw)
 
         forecast = {}
         for s in STUDIOS:
             dts = pd.DatetimeIndex([pd.Timestamp(f"{ds} {h:02d}:00") for h in hours])
-            frame = build_predict_frame(s, dts, temp=temp, precip=prec, schulferien=sf)
+            frame = build_predict_frame(s, dts, temp=temp, precip=prec,
+                                        schulferien=sf, feiertag=int(ft is not None))
             pt, lo, hi = fm.predict(frame)
             forecast[s] = {"pt": [round(float(v)) for v in pt],
                            "lo": [round(float(v)) for v in lo],
@@ -161,6 +197,7 @@ def main():
             "horizon": (d - today).days,   # <0 Vergangenheit, 0 heute, >0 Prognosevorlauf
             "weekday": WEEKDAYS_EN[d.weekday()],
             "schulferien": sf,
+            "feiertag": ft,               # Name (EN) oder None; Prognose behandelt ihn wie Sonntag
             "tmax": round(float(day_temp.max()), 1) if len(day_temp) else None,
             "rain_mm": round(float(day_prec.sum()), 1) if len(day_prec) else None,
             "forecast": forecast,

@@ -37,11 +37,12 @@ def fetch_weather(date_str: str):
         return {}
 
 
-def predict_studio(fm, studio, date_str, weather, hours):
+def predict_studio(fm, studio, date_str, weather, hours, feiertag=0):
     dts = pd.DatetimeIndex([pd.Timestamp(f"{date_str} {h:02d}:00") for h in hours])
     temp = np.array([weather.get(h, (np.nan, np.nan))[0] for h in hours], float)
     prec = np.array([weather.get(h, (np.nan, np.nan))[1] for h in hours], float)
-    frame = build_predict_frame(studio, dts, temp=temp, precip=prec, schulferien=0)
+    frame = build_predict_frame(studio, dts, temp=temp, precip=prec,
+                                schulferien=0, feiertag=feiertag)
     pt, lo, hi = fm.predict(frame)
     return pt, lo, hi
 
@@ -68,11 +69,16 @@ def main():
         tmax = max(v[0] for v in weather.values())
         rain = sum(v[1] for v in weather.values())
         print(f"Wetter {args.date}: Tmax {tmax:.0f}C, Regen {rain:.1f}mm")
+    from build_site import fetch_public_holidays
+    d = pd.Timestamp(args.date).date()
+    ft = (fetch_public_holidays({d.year}) or {}).get(d)
+    if ft:
+        print(f"Feiertag: {ft} -> Prognose mit Sonntagsprofil")
 
     studios = STUDIOS if args.studio == "all" else [args.studio]
     results = {}
     for s in studios:
-        pt, lo, hi = predict_studio(fm, s, args.date, weather, hours)
+        pt, lo, hi = predict_studio(fm, s, args.date, weather, hours, feiertag=int(bool(ft)))
         results[s] = (pt, lo, hi)
 
     # Tabelle (Fokus-Studio bzw. erstes)

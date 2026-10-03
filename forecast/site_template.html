@@ -48,7 +48,14 @@
   header p  { color: var(--text-secondary); font-size: 13px; margin-top: 3px; }
 
   .controls { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 14px; align-items: center; }
-  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow-x: auto; max-width: 100%; background: var(--surface-1); }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow-x: auto; max-width: 100%; background: var(--surface-1);
+        position: relative; scrollbar-width: none; }
+  .seg::-webkit-scrollbar { display: none; }  /* Overlay-Scrollbar verdeckte die Beschriftung */
+  /* Rand-Fade nur dort, wo weitere Tage ausserhalb liegen (Hinweis: hier geht es weiter) */
+  .seg.fade-l { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px); mask-image: linear-gradient(to right, transparent 0, #000 28px); }
+  .seg.fade-r { -webkit-mask-image: linear-gradient(to left, transparent 0, #000 28px); mask-image: linear-gradient(to left, transparent 0, #000 28px); }
+  .seg.fade-l.fade-r { -webkit-mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+                       mask-image: linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%); }
   .seg button {
     border: 0; background: transparent; color: var(--text-secondary);
     font: inherit; font-size: 13.5px; padding: 7px 14px; cursor: pointer;
@@ -252,6 +259,8 @@ function render() {
   if (day.tmax != null) ctx.push(`max ${day.tmax.toLocaleString("en-US")} °C`);
   if (day.rain_mm != null) ctx.push(day.rain_mm > 0.1 ? `${day.rain_mm.toLocaleString("en-US")} mm rain` : "no rain");
   ctx.push(day.schulferien ? "school holidays" : "no school holidays");
+  ctx.push(day.feiertag ? `public holiday: ${day.feiertag} (forecast uses Sunday pattern)`
+                        : "no public holiday");
   $("cardCtx").textContent = ctx.join(" · ");
 
   // Graduated reliability meter (further out = less certain)
@@ -418,6 +427,35 @@ function drawTable(fc, act, hrs) {
 
 buildControls();
 render();
+
+/* Tagesstreifen: startet bei "Today" (linker Rand), vergangene Tage liegen links
+   ausserhalb und sind per Scrollen erreichbar. */
+(function initDayStrip() {
+  const seg = $("daySeg");
+  let userScrolled = false;
+  const updateFade = () => {
+    seg.classList.toggle("fade-l", seg.scrollLeft > 2);
+    seg.classList.toggle("fade-r", seg.scrollLeft + seg.clientWidth < seg.scrollWidth - 2);
+  };
+  const toToday = () => {
+    if (userScrolled) return;
+    const t = seg.children[DATA.today_index ?? 0];
+    // um die Fade-Breite (28px) zurueck: Fade faellt auf "Yesterday" (Hinweis), Today bleibt klar
+    if (t) seg.scrollLeft = Math.max(0, t.offsetLeft - (DATA.today_index > 0 ? 28 : 0));
+    updateFade();
+  };
+  requestAnimationFrame(toToday);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(toToday);  // Breiten nach Webfont
+  seg.addEventListener("scroll", updateFade, { passive: true });
+  ["pointerdown", "touchstart", "wheel"].forEach(ev =>
+    seg.addEventListener(ev, () => { userScrolled = true; }, { passive: true }));
+  // vertikales Mausrad -> horizontal scrollen (Desktop ohne Trackpad)
+  seg.addEventListener("wheel", e => {
+    if (seg.scrollWidth <= seg.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+    seg.scrollLeft += e.deltaY; e.preventDefault();
+  }, { passive: false });
+  window.addEventListener("resize", updateFade);
+})();
 window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
 </script>
 </body>

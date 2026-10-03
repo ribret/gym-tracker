@@ -35,7 +35,15 @@ Lookup, +2,90 MAE (SE 0,43). Kein Leakage (Punktmodell auf `date<d`, Test auf `d
 Voller Wetterblock (Wind, Bewölkung, WMO-Codes, temp²) — 0 Lift; nur `Temperatur_C`
 (monotone Nebenbedingung: Hitze dämpft) + `is_hot` + `is_rain` bleiben. Fourier-Terme
 (Bäume splitten `tod` selbst), Trend `days_since_start` (Bäume extrapolieren nicht),
-Ein-Tages-Feiertag (Overfit-Magnet), externe Feeds (Ausfallfläche > Signal).
+Feiertag als gelerntes Feature (nur ~2 Feiertage im Datensatz, nicht lernbar), externe Feeds
+(Ausfallfläche > Signal).
+
+### Feiertage: Domänen-Prior statt Feature
+Berliner Feiertage (openHolidays API) werden in Training **und** Prognose wie ein **Sonntag**
+behandelt (`features.effective_dow`). Das Sonntagsprofil kennt das Modell aus rund 20 Tagen,
+ein eigener Feiertagseffekt wäre aus 2 Beispielen nicht schätzbar. Test vom 03.10.2026:
+Pfingstmontag MAE 12,6 als Montag gegenüber 7,7 als Sonntag; Feiertag am Samstag neutral
+(6,7 zu 6,5). Evidenz n = 2, Richtung deckt sich mit dem Standardvorgehen der Lastprognose.
 
 ### Unsicherheitsbänder
 **Nicht** über HGB-Quantilregression (kollabiert am unteren Rand bei diesen null-lastigen
