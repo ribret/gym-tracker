@@ -45,6 +45,17 @@ ein eigener Feiertagseffekt wäre aus 2 Beispielen nicht schätzbar. Test vom 03
 Pfingstmontag MAE 12,6 als Montag gegenüber 7,7 als Sonntag; Feiertag am Samstag neutral
 (6,7 zu 6,5). Evidenz n = 2, Richtung deckt sich mit dem Standardvorgehen der Lastprognose.
 
+### Live-Nowcast (seit 04.10.2026)
+Sonderereignisse (Marathon, verkaufsoffene Sonntage) sind mit 1 bis 4 Beispielen je Typ nicht
+lernbar; Marathon-Wochenende 26./27.09. lag in Charlottenburg 8 bis 9 Punkte unter Prognose,
+ein normales Wochenende (29.08.) aber ebenso. Statt Ereigniskalender korrigiert die Seite die
+Prognose deshalb **live**: mittlere Abweichung der Messungen der letzten 60 Min wird voll
+uebernommen und klingt mit exp(-dt/120 Min) ab. Backtest (Parameter auf der ersten Haelfte
+gewaehlt, geprueft auf 61 spaeteren Tagen): Fehler naechste Stunde 8,4 -> 6,0, 1-3 h 8,2 -> 7,3,
+ab 3 h kein Effekt; besser an 59/61 Tagen. Faengt jedes Ereignis ab, auch unbekannte.
+Umsetzung: `gym_tracker.write_today_json` schreibt je Runde `data/today.json`, die Seite laedt
+sie von raw.githubusercontent.com (max. 5 Min Cache) und rechnet im Browser (`nowcast()`).
+
 ### Unsicherheitsbänder
 **Nicht** über HGB-Quantilregression (kollabiert am unteren Rand bei diesen null-lastigen
 Daten auf 0). Stattdessen **signierte Residuen-Quantile, stratifiziert nach Tagesphase**

@@ -5,6 +5,7 @@ JOHN REED Berlin — Auslastungs-Tracker für alle 7 Studios mit Wetter & Kalend
 
 import os
 import csv
+import json
 import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -356,6 +357,33 @@ def last_measurements() -> dict:
                 last[row[0]] = t
     return last
 
+TODAY_JSON = DATA_DIR / "today.json"
+
+def write_today_json(now_local: datetime):
+    """Messwerte des laufenden Tages als kleine JSON fuer die Prognose-Seite. Die Seite
+    laedt sie live von raw.githubusercontent.com und korrigiert damit die Kurve der
+    naechsten Stunden (Nowcast), ohne dass die Seite neu gebaut werden muss."""
+    day = now_local.strftime("%Y-%m-%d")
+    actuals = {}
+    with open(CSV_FILE, encoding="utf-8") as f:
+        r = csv.reader(f, delimiter=";")
+        next(r, None)
+        for row in r:
+            if len(row) < 7 or row[1] != day or not row[6].strip():
+                continue
+            try:
+                hh, mm = map(int, row[2].split(":"))
+                pt = [hh * 60 + mm, int(float(row[6]))]
+            except ValueError:
+                continue
+            pts = actuals.setdefault(row[0], [])
+            if pt not in pts:          # Dubletten an Lauf-Grenzen
+                pts.append(pt)
+    with open(TODAY_JSON, "w", encoding="utf-8") as f:
+        json.dump({"date": day, "updated": now_local.strftime("%H:%M"),
+                   "actuals": {k: sorted(v) for k, v in actuals.items()}},
+                  f, separators=(",", ":"))
+
 def due_studios(now_local: datetime, last: dict) -> list:
     """Welche Studios in dieser Messrunde abgefragt werden."""
     if os.environ.get("STUDIOS_ALL") == "1":          # manueller Override
@@ -396,3 +424,8 @@ if __name__ == "__main__":
                   f"{weather['Temperatur_C']}°C {weather['Niederschlag_mm']}mm")
         except Exception as e:
             print(f"  ⚠️  {gym['name']}: {e}")
+
+    try:
+        write_today_json(now.replace(tzinfo=None))
+    except Exception as e:
+        print(f"  ⚠️  today.json: {e}")

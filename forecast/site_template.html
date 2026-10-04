@@ -109,6 +109,9 @@
   .legend .item { display: inline-flex; align-items: center; gap: 6px; }
   .legend .line { width: 16px; height: 0; border-top: 2.5px solid var(--forecast); border-radius: 2px; }
   .legend .band { width: 16px; height: 10px; background: var(--forecast); opacity: 0.16; border-radius: 2px; }
+  .legend .dash { width: 16px; height: 0; border-top: 2.5px dashed var(--text-primary); }
+  .nowcast { margin-top: 6px; font-size: 12.5px; color: var(--text-secondary); }
+  .nowcast:empty { display: none; }
   .legend .dot  { width: 9px; height: 9px; border-radius: 50%; background: var(--actual); box-shadow: 0 0 0 2px var(--surface-1); }
 
   details { margin: 8px 0 0; }
@@ -138,6 +141,7 @@
     <h2 id="cardTitle"></h2>
     <div class="ctx" id="cardCtx"></div>
     <div class="conf" id="cardConf"></div>
+    <div class="nowcast" id="cardNow"></div>
     <div class="tiles">
       <div class="tile"><div class="lbl">Expected peak</div><div class="val" id="tPeak"></div><div class="sub" id="tPeakSub"></div></div>
       <div class="tile"><div class="lbl">Daily mean (06:00–23:00)</div><div class="val" id="tMean"></div><div class="sub">Forecast</div></div>
@@ -158,6 +162,10 @@
     Model: gradient boosting (full pooling across all 7 studios), retrained from scratch on every
     page build using all data collected so far, so the forecast improves automatically each day.
     Band = empirically calibrated 80% interval (measured coverage ≈ 79%).
+    Dashed line (today only) = live adjustment: the gap between forecast and the
+    measurements of the last hour is carried into the next hours and fades out
+    (halved after about 80 minutes). In the backtest this cut the error for the next hour
+    from 8.4 to 6.0 points; beyond 3 hours it adds nothing.
     Read the shape of the day rather than the exact peak height: mean error is about
     7.5 points in the busy window (10:00 to 21:00) and near zero overnight.
     Weather: Open-Meteo. Details &amp; backtest:
@@ -237,6 +245,46 @@ function syncControls() {
     b.setAttribute("aria-pressed", String(b.dataset.studio === state.studio)));
 }
 
+/* ---------- Live-Nowcast ----------
+   Backtest 04.10.2026 (61 Pruef-Tage, Parameter auf frueherer Haelfte gewaehlt):
+   mittlere Abweichung der Messungen der letzten 60 Min, voll uebernommen, klingt mit
+   exp(-dt/120 Min) ab. Fehler naechste Stunde 8,4 -> 6,0; ab 3 h kein Effekt. */
+const NOW_WINDOW = 60, NOW_TAU = 120, NOW_STALE = 90;
+const berlinNow = () => {
+  const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin",
+    year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+    hourCycle: "h23" }).formatToParts(new Date()).map(x => [x.type, x.value]));
+  return { date: `${p.year}-${p.month}-${p.day}`, min: +p.hour * 60 + +p.minute };
+};
+function interp(arr, m) {           // Prognose (Stundenpunkte) an Minute m, linear
+  const hrs = DATA.hours, x = m / 60;
+  if (x <= hrs[0]) return arr[0];
+  if (x >= hrs[hrs.length-1]) return arr[arr.length-1];
+  const i = Math.floor(x - hrs[0]), f = x - hrs[i];
+  return arr[i] + f * (arr[i+1] - arr[i]);
+}
+function nowcast(day, fc, act) {
+  if (!act.length || day.horizon !== 0) return null;
+  const now = berlinNow();
+  if (now.date !== day.date) return null;
+  const mo = act[act.length - 1][0];
+  if (now.min - mo > NOW_STALE) return null;          // letzte Messung zu alt
+  const rec = act.filter(([m]) => m >= mo - NOW_WINDOW);
+  const c = rec.reduce((a, [m, v]) => a + v - interp(fc.pt, m), 0) / rec.length;
+  const k = m => c * Math.exp(-(m - mo) / NOW_TAU);
+  const clip = v => Math.max(0, Math.min(100, Math.round(v)));
+  const pts = [[mo, clip(interp(fc.pt, mo) + c)]];
+  const adj = {};
+  DATA.hours.forEach((h, i) => {
+    if (h * 60 <= mo) return;
+    adj[i] = { pt: clip(fc.pt[i] + k(h*60)), lo: clip(fc.lo[i] + k(h*60)), hi: clip(fc.hi[i] + k(h*60)) };
+    // Linie endet, sobald sie auf der Prognose liegt (sonst ueberdeckt sie die blaue Linie)
+    if (pts.length && Math.abs(pts[pts.length-1][1] - interp(fc.pt, pts[pts.length-1][0])) >= 0.5)
+      pts.push([h * 60, adj[i].pt]);
+  });
+  return { c, mo, pts, adj };
+}
+
 /* ---------- Rendering ---------- */
 const M = { l: 38, r: 14, t: 18, b: 30 }, W = 720, H = 340;
 const xOf = h => M.l + (h - DATA.hours[0]) / (DATA.hours[DATA.hours.length-1] - DATA.hours[0]) * (W - M.l - M.r);
@@ -252,7 +300,8 @@ function render() {
 
   $("meta").textContent =
     `As of ${DATA.generated} · model trained on ${DATA.train_days} days ` +
-    `(${DATA.train_rows.toLocaleString("en-US")} measurements, latest: ${DATA.last_data})`;
+    `(${DATA.train_rows.toLocaleString("en-US")} measurements, latest: ${DATA.last_data})` +
+    (DATA.live_updated ? ` · live measurements as of ${DATA.live_updated}` : "");
 
   $("cardTitle").textContent = `${label} · ${day.weekday}, ${fmtDate(day.date)}`;
   const ctx = [];
@@ -288,12 +337,20 @@ function render() {
     $("tLastSub").textContent = state.day === DATA.today_index ? "no measurement yet" : "in the future";
   }
 
-  drawChart(fc, act, hrs, peakI, cf.alpha);
-  drawLegend(act.length > 0, day.label);
+  const nc = nowcast(day, fc, act);
+  const nEl = $("cardNow");
+  nEl.textContent = nc && Math.abs(nc.c) >= 1
+    ? `Live adjustment: the last hour ran ${Math.abs(Math.round(nc.c))} points ` +
+      `${nc.c > 0 ? "above" : "below"} forecast, so the next hours are shifted ` +
+      `accordingly (dashed line; the effect fades out after about 3 hours).`
+    : (nc ? "Live adjustment: the last hour matches the forecast." : "");
+
+  drawChart(fc, act, hrs, peakI, cf.alpha, nc);
+  drawLegend(act.length > 0, day.label, nc && Math.abs(nc.c) >= 1);
   drawTable(fc, act, hrs);
 }
 
-function drawChart(fc, act, hrs, peakI, alpha = 1) {
+function drawChart(fc, act, hrs, peakI, alpha = 1, nc = null) {
   const svg = $("chart");
   svg.textContent = "";
   const css = getComputedStyle(document.documentElement);
@@ -331,6 +388,13 @@ function drawChart(fc, act, hrs, peakI, alpha = 1) {
                "font-size": 12, "font-weight": 650, fill: col("--text-primary") },
      svg).textContent = `${fc.pt[peakI]} %`;
 
+  // Live-Nowcast (gestrichelt), nur sichtbar, wenn die Korrektur mind. 1 Punkt ausmacht
+  if (nc && Math.abs(nc.c) >= 1) {
+    el("path", { d: nc.pts.map(([m, v], j) => `${j?"L":"M"}${xOf(m/60)},${yOf(v)}`).join(""),
+                 fill: "none", stroke: col("--text-primary"), "stroke-width": 2,
+                 "stroke-dasharray": "5 4", "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+  }
+
   // Ist-Messungen
   for (const [m, v] of act) {
     el("circle", { cx: xOf(m / 60), cy: yOf(v), r: 4, fill: col("--actual"),
@@ -348,7 +412,7 @@ function drawChart(fc, act, hrs, peakI, alpha = 1) {
     const h = hrs[i];
     cross.setAttribute("x1", xOf(h)); cross.setAttribute("x2", xOf(h));
     cross.setAttribute("visibility", "visible");
-    tooltip(i, fc, act, hrs);
+    tooltip(i, fc, act, hrs, nc);
   };
   const hide = () => { focusI = -1; cross.setAttribute("visibility", "hidden");
                        $("tooltip").style.display = "none"; };
@@ -367,7 +431,7 @@ function drawChart(fc, act, hrs, peakI, alpha = 1) {
   hit.addEventListener("blur", hide);
 }
 
-function tooltip(i, fc, act, hrs) {
+function tooltip(i, fc, act, hrs, nc = null) {
   const tt = $("tooltip"), h = hrs[i];
   tt.textContent = "";
   div("tt-h", tt, `${String(h).padStart(2,"0")}:00`);
@@ -378,6 +442,13 @@ function tooltip(i, fc, act, hrs) {
   div("v", r1, `${fc.pt[i]} %`);
   div("n", r1, "Forecast");
   div("b", div("row", tt), `80% band: ${fc.lo[i]}–${fc.hi[i]} %`);
+  if (nc && Math.abs(nc.c) >= 1 && nc.adj[i]) {
+    const r3 = div("row", tt);
+    const k3 = div("key", r3); k3.style.borderTopColor = css.getPropertyValue("--text-primary");
+    k3.style.borderTopStyle = "dashed";
+    div("v", r3, `${nc.adj[i].pt} %`);
+    div("n", r3, "Live-adjusted");
+  }
 
   const near = act.filter(([m]) => Math.abs(m - h * 60) <= 30)
                   .sort((a,b) => Math.abs(a[0]-h*60) - Math.abs(b[0]-h*60))[0];
@@ -395,12 +466,13 @@ function tooltip(i, fc, act, hrs) {
   tt.style.top = "14px";
 }
 
-function drawLegend(hasActuals, dayLabel) {
+function drawLegend(hasActuals, dayLabel, hasNow = false) {
   const lg = $("legend");
   lg.textContent = "";
   const mk = (cls, txt) => { const it = div("item", lg); div(cls, it); div("", it, txt); };
   mk("line", "Forecast");
   mk("band", "80% band");
+  if (hasNow) mk("dash", "Live-adjusted");
   if (hasActuals) mk("dot", `Measurements ${dayLabel === "Today" ? "today" : dayLabel.toLowerCase()}`);
 }
 
@@ -427,6 +499,25 @@ function drawTable(fc, act, hrs) {
 
 buildControls();
 render();
+
+/* Heutige Messungen live nachladen (Collector schreibt data/today.json jede Runde,
+   raw.githubusercontent.com cacht max. 5 Min). Seite bleibt ohne Netz voll nutzbar. */
+(async function loadLive() {
+  try {
+    const r = await fetch("https://raw.githubusercontent.com/ribret/gym-tracker/main/data/today.json",
+                          { cache: "no-store" });
+    if (!r.ok) return;
+    const live = await r.json();
+    const day = DATA.days[DATA.today_index];
+    if (!day || live.date !== day.date) return;
+    day.actuals = day.actuals || {};
+    for (const [s, pts] of Object.entries(live.actuals || {})) {
+      if (!day.actuals[s] || pts.length >= day.actuals[s].length) day.actuals[s] = pts;
+    }
+    DATA.live_updated = live.updated;
+    render();
+  } catch (e) { /* offline oder blockiert: Build-Stand bleibt */ }
+})();
 
 /* Tagesstreifen: startet bei "Today" (linker Rand), vergangene Tage liegen links
    ausserhalb und sind per Scrollen erreichbar. */
