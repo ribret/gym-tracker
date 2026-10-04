@@ -511,7 +511,9 @@ render();
     const day = DATA.days[DATA.today_index];
     if (!day || live.date !== day.date) return;
     day.actuals = day.actuals || {};
-    for (const [s, pts] of Object.entries(live.actuals || {})) {
+    const lo = DATA.hours[0] * 60, hi = DATA.hours[DATA.hours.length-1] * 60 + 59;
+    for (const [s, all] of Object.entries(live.actuals || {})) {
+      const pts = all.filter(([m]) => m >= lo && m <= hi);   // wie im Build: nur Achsenbereich
       if (!day.actuals[s] || pts.length >= day.actuals[s].length) day.actuals[s] = pts;
     }
     DATA.live_updated = live.updated;
