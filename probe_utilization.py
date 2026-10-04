@@ -7,7 +7,7 @@ from gym_tracker import GYMS, BASE_URL, BRAND_ID, BERLIN, get_id_token, _api_hea
 
 tok = get_id_token()
 print("Abruf:", datetime.now(BERLIN).strftime("%Y-%m-%d %H:%M:%S"), "Berlin")
-for key in ["charlottenburg", "kreuzberg", "boetzow"]:
+for key in GYMS:
     r = requests.get(f"{BASE_URL}/gyms/{BRAND_ID}/gym/{GYMS[key]['id']}/utilization",
                      headers=_api_headers(tok), timeout=10)
     print(f"\n=== {key} HTTP {r.status_code}")
