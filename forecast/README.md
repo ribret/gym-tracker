@@ -56,6 +56,16 @@ ab 3 h kein Effekt; besser an 59/61 Tagen. Faengt jedes Ereignis ab, auch unbeka
 Umsetzung: `gym_tracker.write_today_json` schreibt je Runde `data/today.json`, die Seite laedt
 sie von raw.githubusercontent.com (max. 5 Min Cache) und rechnet im Browser (`nowcast()`).
 
+### Nacht-Snapshot der Stundentabelle (seit 08.10.2026)
+Die API liefert je Studio eine Tabelle aller Stunden des Tages: abgeschlossene Stunden als
+Stundenmittel (Abgleich 04.10. Charlottenburg, 18 Stunden: MAE 0,7 zu den eigenen
+20-Min-Messungen), laufende Stunde live, kuenftige 0. Reset kurz nach Mitternacht, je Studio
+um Minuten versetzt (07.10. 00:03: 3 von 7 noch mit Vortag); der Vortag ist danach weg.
+Die erste Messrunde zwischen 23:30 und 23:59 sichert deshalb alle 7 Studios, Stunden 0-22,
+in `data/hourly_snapshot.csv` (Stunde 23 fehlt; betrifft praktisch nur Prenzlauer Berg, 24 h).
+Noch **nicht** im Training: Stundenmittel sind glatter als Punktwerte, Einbindung erst nach
+Backtest (z.B. als Punkt um HH:30 mit Quellenflag).
+
 ### Unsicherheitsbänder
 **Nicht** über HGB-Quantilregression (kollabiert am unteren Rand bei diesen null-lastigen
 Daten auf 0). Stattdessen **signierte Residuen-Quantile, stratifiziert nach Tagesphase**

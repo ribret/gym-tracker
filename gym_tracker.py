@@ -128,13 +128,19 @@ def _api_headers(id_token: str) -> dict:
         "User-Agent":            "ktor-client",
     }
 
-def fetch_utilization(id_token: str, gym_id: str) -> int:
+def fetch_utilization_table(id_token: str, gym_id: str) -> dict:
+    """Stundentabelle des laufenden Tages {"0": .., "23": ..}. Laufende Stunde = Live-Wert,
+    abgeschlossene Stunden = Stundenmittel (Abgleich 04.10.2026: MAE 0,7 zu eigenen
+    20-Min-Messungen), kuenftige Stunden = 0. Reset kurz nach Mitternacht, je Studio
+    um einige Minuten versetzt; Vortag danach nicht mehr abrufbar."""
     url = f"{BASE_URL}/gyms/{BRAND_ID}/gym/{gym_id}/utilization"
     resp = requests.get(url, headers=_api_headers(id_token), timeout=10)
     resp.raise_for_status()
-    utilization = resp.json()["data"]["utilization"]
+    return resp.json()["data"]["utilization"]
+
+def fetch_utilization(id_token: str, gym_id: str) -> int:
     current_hour = str(datetime.now(BERLIN).hour)
-    return int(utilization.get(current_hour, 0))
+    return int(fetch_utilization_table(id_token, gym_id).get(current_hour, 0))
 
 _WEATHER_KEYS = ["Temperatur_C", "Niederschlag_mm", "Wettercode", "Bewoelkung_%", "Wind_kmh"]
 
@@ -359,6 +365,43 @@ def last_measurements() -> dict:
 
 TODAY_JSON = DATA_DIR / "today.json"
 
+# Nacht-Snapshot: In einer Runde zwischen 23:30 und 23:59 Uhr die komplette Stundentabelle
+# aller Studios sichern (Stunden 0-22 als Stundenmittel; 23 laeuft noch und fehlt). Gibt
+# den anderen Studios trotz nur 3 Tagesmessungen ein volles Tagesprofil. Eigene Datei,
+# weil Stundenmittel etwas anderes messen als die Punktwerte in gym_utilization.csv.
+SNAPSHOT_CSV     = DATA_DIR / "hourly_snapshot.csv"
+SNAPSHOT_COLUMNS = ["Studio", "Datum", "Stunde", "Auslastung_Stundenmittel_%", "Abruf"]
+SNAPSHOT_FROM    = (23, 30)
+
+def snapshot_done(day: str) -> bool:
+    if not SNAPSHOT_CSV.exists():
+        return False
+    with open(SNAPSHOT_CSV, encoding="utf-8") as f:
+        return any(line.split(";")[1:2] == [day] for line in f)
+
+def write_snapshot(id_token: str, now_local: datetime):
+    day = now_local.strftime("%Y-%m-%d")
+    if (now_local.hour, now_local.minute) < SNAPSHOT_FROM or snapshot_done(day):
+        return
+    rows = []
+    for key, gym in GYMS.items():
+        try:
+            table = fetch_utilization_table(id_token, gym["id"])
+        except Exception as e:
+            print(f"  ⚠️  Snapshot {gym['name']}: {e}")
+            continue
+        rows += [[key, day, h, int(table.get(str(h), 0)), now_local.strftime("%H:%M")]
+                 for h in range(now_local.hour)]          # nur abgeschlossene Stunden
+    if not rows:
+        return
+    is_new = not SNAPSHOT_CSV.exists()
+    with open(SNAPSHOT_CSV, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f, delimiter=";")
+        if is_new:
+            w.writerow(SNAPSHOT_COLUMNS)
+        w.writerows(rows)
+    print(f"  Nacht-Snapshot: {len(rows)} Stundenwerte ({len(rows) // max(1, now_local.hour)} Studios)")
+
 def write_today_json(now_local: datetime):
     """Messwerte des laufenden Tages als kleine JSON fuer die Prognose-Seite. Die Seite
     laedt sie live von raw.githubusercontent.com und korrigiert damit die Kurve der
@@ -429,3 +472,8 @@ if __name__ == "__main__":
         write_today_json(now.replace(tzinfo=None))
     except Exception as e:
         print(f"  ⚠️  today.json: {e}")
+
+    try:
+        write_snapshot(id_token, now.replace(tzinfo=None))
+    except Exception as e:
+        print(f"  ⚠️  Snapshot: {e}")
